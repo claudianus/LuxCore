@@ -23,6 +23,8 @@
 #include "slg/lights/light.h"
 #include "slg/scene/scene.h"
 
+namespace slg { class BSDF; }
+
 namespace slg {
 
 //------------------------------------------------------------------------------
@@ -35,7 +37,7 @@ typedef enum {
 } LightStrategyTask;
 
 typedef enum {
-	TYPE_UNIFORM, TYPE_POWER, TYPE_LOG_POWER, TYPE_DLS_CACHE,
+	TYPE_UNIFORM, TYPE_POWER, TYPE_LOG_POWER, TYPE_DLS_CACHE, TYPE_RESTIR_DI,
 	LIGHT_STRATEGY_TYPE_COUNT
 } LightStrategyType;
 
@@ -57,6 +59,24 @@ public:
 			const luxrays::Point &p, const luxrays::Normal &n,
 			const bool isVolume,
 			float *pdf) const = 0;
+
+	// BSDF-aware direct light sampling (ReSTIR-style target functions).
+	// Default implementation: fall back to the plain SampleLights().
+	// Strategies that can use BSDF context (e.g. RESTIR_DI) override this
+	// to weight candidates by their estimated contribution.
+	// *pdf must be the light-selection pdf used by the direct-hit MIS
+	// (SampleLightPdf convention) so both MIS sides stay consistent;
+	// strategies that resample candidates (RIS) return their output
+	// weight through *risScale (defaults to 1) instead of folding it
+	// into the pdf.
+	// (BSDF is forward-declared to avoid a heavy include here.)
+	virtual LightSourcePtr SampleLightsBSDF(
+			SceneConstRef scene,
+			const BSDF &bsdf,
+			const float time,
+			const float u,
+			float *pdf,
+			float *risScale = nullptr) const;
 
 	virtual float SampleLightPdf(
 			LightSourceConstRef light,

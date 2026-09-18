@@ -18,6 +18,7 @@
 
 #include "slg/lights/strategies/lightstrategyregistry.h"
 #include "slg/scene/scene.h"
+#include "slg/bsdf/bsdf.h"
 
 using namespace std;
 using namespace luxrays;
@@ -103,6 +104,19 @@ PropertiesUPtr LightStrategy::GetDefaultProps() {
 	return props;
 }
 
+LightSourcePtr LightStrategy::SampleLightsBSDF(
+		SceneConstRef scene, const BSDF &bsdf, const float time,
+		const float u, float *pdf, float *risScale) const {
+	// Default: strategies without BSDF-aware sampling fall back to the
+	// plain position/normal-based interface
+	if (risScale)
+		*risScale = 1.f;
+	const Normal landingNormal = bsdf.hitPoint.intoObject ?
+		bsdf.hitPoint.shadeN : -bsdf.hitPoint.shadeN;
+	return SampleLights(scene, u, bsdf.hitPoint.p, landingNormal,
+		bsdf.IsVolume(), pdf);
+}
+
 //------------------------------------------------------------------------------
 // LightStrategyRegistry
 //
@@ -121,5 +135,6 @@ OBJECTSTATICREGISTRY_REGISTER(LightStrategyRegistry, LightStrategyUniform);
 OBJECTSTATICREGISTRY_REGISTER(LightStrategyRegistry, LightStrategyPower);
 OBJECTSTATICREGISTRY_REGISTER(LightStrategyRegistry, LightStrategyLogPower);
 OBJECTSTATICREGISTRY_REGISTER(LightStrategyRegistry, LightStrategyDLSCache);
+OBJECTSTATICREGISTRY_REGISTER(LightStrategyRegistry, LightStrategyRestirDI);
 // Just add here any new LightStrategy (don't forget in the .h too)
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4
