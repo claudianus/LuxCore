@@ -68,6 +68,16 @@ OPENCL_FORCE_INLINE void HitPoint_Init(__global HitPoint *hitPoint, const bool t
 	VSTORE3F(dndv, &hitPoint->dndv.x);
 }
 
+// Neutral spectral state: default bin wavelengths, all bins alive, hero 0.
+// Scene_Intersect() overwrites these from the owning SampleResult on SLG_SPECTRAL builds.
+OPENCL_FORCE_INLINE void HitPoint_InitSpectral(__global HitPoint *hitPoint) {
+	hitPoint->spectralW[0] = SLG_SPECTRAL_START;
+	hitPoint->spectralW[1] = SLG_SPECTRAL_START + SLG_SPECTRAL_BIN_WIDTH;
+	hitPoint->spectralW[2] = SLG_SPECTRAL_START + 2.f * SLG_SPECTRAL_BIN_WIDTH;
+	hitPoint->spectralHeroAlive = SLG_SW_DEFAULT;
+	hitPoint->spectralEmissionEval = 0u;
+}
+
 // Initialize all fields
 OPENCL_FORCE_INLINE void HitPoint_InitDefault(__global HitPoint *hitPoint) {
 	hitPoint->meshIndex = NULL_INDEX;
@@ -99,6 +109,8 @@ OPENCL_FORCE_INLINE void HitPoint_InitDefault(__global HitPoint *hitPoint) {
 	hitPoint->exteriorVolumeIndex = NULL_INDEX;
 	hitPoint->interiorIorTexIndex = NULL_INDEX;
 	hitPoint->exteriorIorTexIndex = NULL_INDEX;
+
+	HitPoint_InitSpectral(hitPoint);
 }
 
 OPENCL_FORCE_INLINE void HitPoint_GetFrame(__global const HitPoint *hitPoint, Frame *frame) {

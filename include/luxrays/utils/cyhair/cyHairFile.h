@@ -227,11 +227,14 @@ public:
 		) {
 			if ( !(header.arrays & mask)) return 0;
 			arr.clear();
-			arr.resize(header.hair_count);
+			// Segments are stored per-hair; all other arrays are per-point
+			const size_t count = (mask == CY_HAIR_FILE_SEGMENTS_BIT) ?
+				header.hair_count : header.point_count * dimension;
+			arr.resize(count);
 			size_t readcount = fread(
-				arr.data(), sizeof(T), header.hair_count, fp
+				arr.data(), sizeof(T), count, fp
 			);
-			if ( readcount < header.hair_count )
+			if ( readcount < count )
 				_CY_FAILED_RETURN(CY_HAIR_FILE_ERROR_READING_SEGMENTS);
 			return 0;
 		};

@@ -55,5 +55,15 @@ typedef struct {
 	unsigned int objectID;
 
 	int intoObject, throughShadowTransparency;
+
+	// Hero-wavelength spectral state (SLG_SPECTRAL builds), copied from the
+	// owning SampleResult by Scene_Intersect: texture leaf upsampling and
+	// dispersive material events read it here.
+	float spectralW[3];
+	unsigned int spectralHeroAlive;
+	// Transient flag: non-zero while an emission-context texture graph is
+	// being evaluated (Material_GetEmittedRadiance sets it around the
+	// emittedTex eval) so leaf RGB producers pick the illuminant basis.
+	unsigned int spectralEmissionEval;
 } HitPoint;
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

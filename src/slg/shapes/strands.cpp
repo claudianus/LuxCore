@@ -330,11 +330,14 @@ StrendsShape::StrendsShape(SceneConstRef scene,
 		vector<Triangle> meshTris;
 		vector<UV> meshUVs;
 		vector<Spectrum> meshCols;
+		vector<Vector> meshTangents;
+		vector<float> meshStrandUs;
+		vector<float> meshStrandRands;
 		vector<float> meshTransps;
 		for (u_int i = 0; i < header.hair_count; ++i) {
 			// segmentSize must be signed
 			const auto segmentSize = not segments.empty() ? segments[i] : header.d_segments;
-			if (segmentSize == 0)
+			if ((segmentSize <= 0) || (pointIndex >= header.point_count))
 				continue;
 
 			// Collect the segment points and size
@@ -344,6 +347,10 @@ StrendsShape::StrendsShape(SceneConstRef scene,
 			hairTransps.clear();
 			hairUVs.clear();
 			for (int j = 0; j <= segmentSize; ++j) {
+				// A corrupted .hair file may declare more segment points
+				// than header.point_count: never read past the arrays
+				if (pointIndex >= header.point_count)
+					break;
 				hairPoints.push_back(Point(points[pointIndex * 3], points[pointIndex * 3 + 1], points[pointIndex * 3 + 2]));
 				hairSizes.push_back(((not thickness.empty()) ? thickness[pointIndex] : header.d_thickness) * .5f);
 				if (not colors.empty())
@@ -362,30 +369,47 @@ StrendsShape::StrendsShape(SceneConstRef scene,
 				++pointIndex;
 			}
 
+			if (hairPoints.empty())
+				continue;
+
+			// Per-strand random (Cycles Hair Info > Random): a deterministic
+			// value in [0,1) identical across every vertex of this strand,
+			// derived from the strand index so it is stable frame to frame.
+			u_int randHash = i * 2654435761u;
+			randHash ^= randHash >> 16;
+			randHash *= 2246822519u;
+			randHash ^= randHash >> 13;
+			const float strandRand = (randHash & 0x00FFFFFFu) / float(0x01000000u);
+			const u_int vertsBefore = meshVerts.size();
+
 			switch (tesselType) {
 				case TESSEL_RIBBON:
 					TessellateRibbon(scene, hairPoints, hairSizes, hairCols, hairUVs,
 							hairTransps, meshVerts, meshNorms, meshTris, meshUVs,
-							meshCols, meshTransps);
+							meshCols, meshTransps, meshTangents, meshStrandUs);
 					break;
 				case TESSEL_RIBBON_ADAPTIVE:
 					TessellateAdaptive(scene, false, hairPoints, hairSizes, hairCols, hairUVs,
 							hairTransps, meshVerts, meshNorms, meshTris, meshUVs,
-							meshCols, meshTransps);
+							meshCols, meshTransps, meshTangents, meshStrandUs);
 					break;
 				case TESSEL_SOLID:
 					TessellateSolid(scene, hairPoints, hairSizes, hairCols, hairUVs,
 							hairTransps, meshVerts, meshNorms, meshTris, meshUVs,
-							meshCols, meshTransps);
+							meshCols, meshTransps, meshTangents, meshStrandUs);
 					break;
 				case TESSEL_SOLID_ADAPTIVE:
 					TessellateAdaptive(scene, true, hairPoints, hairSizes, hairCols, hairUVs,
 							hairTransps, meshVerts, meshNorms, meshTris, meshUVs,
-							meshCols, meshTransps);
+							meshCols, meshTransps, meshTangents, meshStrandUs);
 					break;
 				default:
 					SLG_LOG("Unknown tessellation  type in an Strands Shape: " + ToString(tesselType));
 			}
+
+			// Stamp the per-strand random onto every vertex this strand emitted.
+			for (u_int v = vertsBefore; v < meshVerts.size(); ++v)
+				meshStrandRands.push_back(strandRand);
 		}
 
 		// Normalize normals
@@ -447,6 +471,39 @@ StrendsShape::StrendsShape(SceneConstRef scene,
 			newMeshCols,
 			newMeshTransps
 		);
+
+		// Store the per-vertex strand tangent (object space) in the reserved
+		// vertex AOV layers for the hair material
+		if (meshTangents.size() == meshVerts.size()) {
+			auto tangentX = std::make_shared<float[]>(meshTangents.size());
+			auto tangentY = std::make_shared<float[]>(meshTangents.size());
+			auto tangentZ = std::make_shared<float[]>(meshTangents.size());
+			for (u_int i = 0; i < meshTangents.size(); ++i) {
+				tangentX[i] = meshTangents[i].x;
+				tangentY[i] = meshTangents[i].y;
+				tangentZ[i] = meshTangents[i].z;
+			}
+			mesh->SetVertexAOV(HAIR_TANGENT_X_DATA_INDEX, tangentX, meshTangents.size());
+			mesh->SetVertexAOV(HAIR_TANGENT_Y_DATA_INDEX, tangentY, meshTangents.size());
+			mesh->SetVertexAOV(HAIR_TANGENT_Z_DATA_INDEX, tangentZ, meshTangents.size());
+		}
+
+		// Store the per-vertex normalized strand position (0 = root, 1 = tip)
+		// in its reserved vertex AOV layer for the Cycles Hair Info > Intercept
+		// output.
+		if (meshStrandUs.size() == meshVerts.size()) {
+			auto strandU = std::make_shared<float[]>(meshStrandUs.size());
+			std::copy(meshStrandUs.begin(), meshStrandUs.end(), strandU.get());
+			mesh->SetVertexAOV(HAIR_STRAND_U_DATA_INDEX, strandU, meshStrandUs.size());
+		}
+
+		// Store the per-strand random (Cycles Hair Info > Random) in its
+		// reserved vertex AOV layer.
+		if (meshStrandRands.size() == meshVerts.size()) {
+			auto strandRand = std::make_shared<float[]>(meshStrandRands.size());
+			std::copy(meshStrandRands.begin(), meshStrandRands.end(), strandRand.get());
+			mesh->SetVertexAOV(HAIR_STRAND_RANDOM_DATA_INDEX, strandRand, meshStrandRands.size());
+		}
 	} else
 		throw runtime_error("Strands shape without segments are not supported");
 
@@ -460,9 +517,12 @@ void StrendsShape::TessellateRibbon(SceneConstRef scene,
 		const vector<UV> &hairUVs, const vector<float> &hairTransps,
 		vector<Point> &meshVerts, vector<Normal> &meshNorms,
 		vector<Triangle> &meshTris, vector<UV> &meshUVs, vector<Spectrum> &meshCols,
-		vector<float> &meshTransps) const {
+		vector<float> &meshTransps, vector<Vector> &meshTangents,
+		vector<float> &meshStrandUs) const {
 	// Create the mesh vertices
 	const u_int baseOffset = meshVerts.size();
+	// Normalized position along the strand (0 = root, 1 = tip)
+	const float strandUStep = 1.f / Max(1, (int)hairPoints.size() - 1);
 
 	const Point cameraPosition =
 		(useCameraPosition && (scene.GetCamera().GetType() == Camera::PERSPECTIVE)) ?
@@ -475,11 +535,18 @@ void StrendsShape::TessellateRibbon(SceneConstRef scene,
 	Quaternion trans;
 	for (int i = 0; i < (int)hairPoints.size(); ++i) {
 		Vector dir;
-		// I need a special case for the very last point
-		if (i == (int)hairPoints.size() - 1)
-			dir = Normalize(hairPoints[i] - hairPoints[i - 1]);
-		else
-			dir = Normalize(hairPoints[i + 1] - hairPoints[i]);
+		// I need a special case for the very last point. Guard against
+		// degenerate strands (single or coincident points): they used to
+		// read hairPoints[-1] and produce NaN directions.
+		if (hairPoints.size() < 2) {
+			dir = Vector(0.f, 0.f, 1.f);
+		} else if (i == (int)hairPoints.size() - 1) {
+			const Vector d = hairPoints[i] - hairPoints[i - 1];
+			dir = (d.LengthSquared() > 0.f) ? Normalize(d) : previousDir;
+		} else {
+			const Vector d = hairPoints[i + 1] - hairPoints[i];
+			dir = (d.LengthSquared() > 0.f) ? Normalize(d) : previousDir;
+		}
 
 		if (i == 0) {
 			// Build the initial quaternion by establishing an initial (arbitrary)
@@ -498,8 +565,10 @@ void StrendsShape::TessellateRibbon(SceneConstRef scene,
 					up = Vector(0.f, 0.f, 1.f);
 			}
 
-			const Transform dirTrans = LookAt(hairPoints[0], hairPoints[1], up);
-			trans = Quaternion(dirTrans.m);
+			if (hairPoints.size() > 1) {
+				const Transform dirTrans = LookAt(hairPoints[0], hairPoints[1], up);
+				trans = Quaternion(dirTrans.m);
+			}
 		} else {
 			// Compose the new delta transformation with all old one
 			trans = GetRotationBetween(previousDir, dir) * trans;
@@ -515,10 +584,15 @@ void StrendsShape::TessellateRibbon(SceneConstRef scene,
 		
 		const Point p0 = hairPoints[i] + hairSizes[i] * x;
 		const Point p1 = hairPoints[i] - hairSizes[i] * x;
+		const float strandU = i * strandUStep;
 		meshVerts.push_back(p0);
 		meshNorms.push_back(Normal());
+		meshTangents.push_back(dir);
+		meshStrandUs.push_back(strandU);
 		meshVerts.push_back(p1);
 		meshNorms.push_back(Normal());
+		meshTangents.push_back(dir);
+		meshStrandUs.push_back(strandU);
 
 		meshUVs.push_back(hairUVs[i]);
 		meshUVs.push_back(hairUVs[i]);
@@ -563,7 +637,8 @@ void StrendsShape::TessellateAdaptive(SceneConstRef scene,
 		const vector<UV> &hairUVs, const vector<float> &hairTransps,
 		vector<Point> &meshVerts, vector<Normal> &meshNorms,
 		vector<Triangle> &meshTris, vector<UV> &meshUVs, vector<Spectrum> &meshCols,
-		vector<float> &meshTransps) const {
+		vector<float> &meshTransps, vector<Vector> &meshTangents,
+		vector<float> &meshStrandUs) const {
 	// Interpolate the hair segments
 	CatmullRomCurve curve;
 	for (int i = 0; i < (int)hairPoints.size(); ++i)
@@ -590,10 +665,10 @@ void StrendsShape::TessellateAdaptive(SceneConstRef scene,
 
 	if (solid)
 		TessellateSolid(scene, tesselPoints, tesselSizes, tesselCols, tesselUVs, tesselTransps,
-			meshVerts, meshNorms, meshTris, meshUVs, meshCols, meshTransps);
+			meshVerts, meshNorms, meshTris, meshUVs, meshCols, meshTransps, meshTangents, meshStrandUs);
 	else
 		TessellateRibbon(scene, tesselPoints, tesselSizes, tesselCols, tesselUVs, tesselTransps,
-			meshVerts, meshNorms, meshTris, meshUVs, meshCols, meshTransps);
+			meshVerts, meshNorms, meshTris, meshUVs, meshCols, meshTransps, meshTangents, meshStrandUs);
 }
 
 void StrendsShape::TessellateSolid(SceneConstRef scene,
@@ -602,10 +677,13 @@ void StrendsShape::TessellateSolid(SceneConstRef scene,
 		const vector<UV> &hairUVs, const vector<float> &hairTransps,
 		vector<Point> &meshVerts, vector<Normal> &meshNorms,
 		vector<Triangle> &meshTris, vector<UV> &meshUVs, vector<Spectrum> &meshCols,
-		vector<float> &meshTransps) const {
+		vector<float> &meshTransps, vector<Vector> &meshTangents,
+		vector<float> &meshStrandUs) const {
 	// Create the mesh vertices
 	const u_int baseOffset = meshVerts.size();
 	const float angleStep = Radians(360.f / solidSideCount);
+	// Normalized position along the strand (0 = root, 1 = tip)
+	const float strandUStep = 1.f / Max(1, (int)hairPoints.size() - 1);
 
 	Vector previousDir;
 	Vector previousX, previousY, previousZ;
@@ -613,11 +691,18 @@ void StrendsShape::TessellateSolid(SceneConstRef scene,
 	Quaternion trans;
 	for (int i = 0; i < (int)hairPoints.size(); ++i) {
 		Vector dir;
-		// I need a special case for the very last point
-		if (i == (int)hairPoints.size() - 1)
-			dir = Normalize(hairPoints[i] - hairPoints[i - 1]);
-		else
-			dir = Normalize(hairPoints[i + 1] - hairPoints[i]);
+		// I need a special case for the very last point. Guard against
+		// degenerate strands (single or coincident points): they used to
+		// read hairPoints[-1] and produce NaN directions.
+		if (hairPoints.size() < 2) {
+			dir = Vector(0.f, 0.f, 1.f);
+		} else if (i == (int)hairPoints.size() - 1) {
+			const Vector d = hairPoints[i] - hairPoints[i - 1];
+			dir = (d.LengthSquared() > 0.f) ? Normalize(d) : previousDir;
+		} else {
+			const Vector d = hairPoints[i + 1] - hairPoints[i];
+			dir = (d.LengthSquared() > 0.f) ? Normalize(d) : previousDir;
+		}
 
 		if (i == 0) {
 			// Build the initial quaternion by establishing an initial (arbitrary)
@@ -627,8 +712,10 @@ void StrendsShape::TessellateSolid(SceneConstRef scene,
 			if (AbsDot(dir, up) > 1.f - .05f)
 				up = Vector(1.f, 0.f, 0.f);
 
-			const Transform dirTrans = LookAt(hairPoints[0], hairPoints[1], up);
-			trans = Quaternion(dirTrans.m);
+			if (hairPoints.size() > 1) {
+				const Transform dirTrans = LookAt(hairPoints[0], hairPoints[1], up);
+				trans = Quaternion(dirTrans.m);
+			}
 		} else {
 			// Compose the new delta transformation with all old one
 			trans = GetRotationBetween(previousDir, dir) * trans;
@@ -658,6 +745,8 @@ void StrendsShape::TessellateSolid(SceneConstRef scene,
 			
 			meshVerts.push_back(p);
 			meshNorms.push_back(Normal());
+			meshTangents.push_back(dir);
+			meshStrandUs.push_back(i * strandUStep);
 			meshUVs.push_back(hairUVs[i]);
 			meshCols.push_back(hairCols[i]);
 			meshTransps.push_back(hairTransps[i]);
@@ -693,13 +782,15 @@ void StrendsShape::TessellateSolid(SceneConstRef scene,
 		}
 	}
 
-	if (solidCapTop) {
+	if (solidCapTop && hairPoints.size() > 1) {
 		// Add a top fan cap
 		const u_int offset = meshVerts.size();
 		const Normal n = Normal(Normalize(hairPoints[hairPoints.size() - 1] - hairPoints[hairPoints.size() - 2]));
 		for (u_int j = 0; j < solidSideCount; ++j) {
 			meshVerts.push_back(meshVerts[offset - solidSideCount + j]);
 			meshNorms.push_back(n);
+			meshTangents.push_back(Vector(n));
+			meshStrandUs.push_back(1.f);
 			meshUVs.push_back(hairUVs.back());
 			meshCols.push_back(hairCols.back());
 			meshTransps.push_back(hairTransps.back());
@@ -708,6 +799,8 @@ void StrendsShape::TessellateSolid(SceneConstRef scene,
 		// Add the fan center
 		meshVerts.push_back(hairPoints.back());
 		meshNorms.push_back(n);
+		meshTangents.push_back(Vector(n));
+		meshStrandUs.push_back(1.f);
 		meshUVs.push_back(hairUVs.back());
 		meshCols.push_back(hairCols.back());
 		meshTransps.push_back(hairTransps.back());
@@ -721,13 +814,15 @@ void StrendsShape::TessellateSolid(SceneConstRef scene,
 		}
 	}
 
-	if (solidCapBottom) {
+	if (solidCapBottom && hairPoints.size() > 1) {
 		// Add a bottom fan cap
 		const u_int offset = meshVerts.size();
 		const Normal n = Normal(Normalize(hairPoints[0] - hairPoints[1]));
 		for (u_int j = 0; j < solidSideCount; ++j) {
 			meshVerts.push_back(meshVerts[baseOffset + j]);
 			meshNorms.push_back(n);
+			meshTangents.push_back(-Vector(n));
+			meshStrandUs.push_back(0.f);
 			meshUVs.push_back(hairUVs[0]);
 			meshCols.push_back(hairCols[0]);
 			meshTransps.push_back(hairTransps[0]);
@@ -736,6 +831,8 @@ void StrendsShape::TessellateSolid(SceneConstRef scene,
 		// Add the fan center
 		meshVerts.push_back(hairPoints[0]);
 		meshNorms.push_back(n);
+		meshTangents.push_back(-Vector(n));
+		meshStrandUs.push_back(0.f);
 		meshUVs.push_back(hairUVs[0]);
 		meshCols.push_back(hairCols[0]);
 		meshTransps.push_back(hairTransps[0]);

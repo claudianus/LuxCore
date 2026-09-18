@@ -29,6 +29,19 @@
 
 namespace slg {
 
+// Vertex AOV layers reserved by the strands tessellation for hair shading:
+// the per-vertex strand tangent in object space (used by HairMaterial).
+constexpr u_int HAIR_TANGENT_X_DATA_INDEX = 4;
+constexpr u_int HAIR_TANGENT_Y_DATA_INDEX = 5;
+constexpr u_int HAIR_TANGENT_Z_DATA_INDEX = 6;
+// Normalized position along the strand, 0 at the root and 1 at the tip
+// (the Cycles "Hair Info > Intercept" shading parameter).
+constexpr u_int HAIR_STRAND_U_DATA_INDEX = 7;
+// Deterministic per-strand random in [0,1), constant across every vertex of a
+// strand (the Cycles "Hair Info > Random" shading parameter). Stored in a
+// low-numbered AOV layer that strands shapes do not otherwise use.
+constexpr u_int HAIR_STRAND_RANDOM_DATA_INDEX = 0;
+
 class StrendsShape : public Shape {
 public:
 	typedef enum {
@@ -54,21 +67,24 @@ protected:
 		const std::vector<luxrays::UV> &hairUVs, const std::vector<float> &hairTransps,
 		std::vector<luxrays::Point> &meshVerts, std::vector<luxrays::Normal> &meshNorms,
 		std::vector<luxrays::Triangle> &meshTris, std::vector<luxrays::UV> &meshUVs, std::vector<luxrays::Spectrum> &meshCols,
-		std::vector<float> &meshTransps) const;
+		std::vector<float> &meshTransps, std::vector<luxrays::Vector> &meshTangents,
+		std::vector<float> &meshStrandUs) const;
 	void TessellateAdaptive(SceneConstRef scene,
 		const bool solid, const std::vector<luxrays::Point> &hairPoints,
 		const std::vector<float> &hairSizes, const std::vector<luxrays::Spectrum> &hairCols,
 		const std::vector<luxrays::UV> &hairUVs, const std::vector<float> &hairTransps,
 		std::vector<luxrays::Point> &meshVerts, std::vector<luxrays::Normal> &meshNorms,
 		std::vector<luxrays::Triangle> &meshTris, std::vector<luxrays::UV> &meshUVs, std::vector<luxrays::Spectrum> &meshCols,
-		std::vector<float> &meshTransps) const;
+		std::vector<float> &meshTransps, std::vector<luxrays::Vector> &meshTangents,
+		std::vector<float> &meshStrandUs) const;
 	void TessellateSolid(SceneConstRef scene,
 		const std::vector<luxrays::Point> &hairPoints,
 		const std::vector<float> &hairSizes, const std::vector<luxrays::Spectrum> &hairCols,
 		const std::vector<luxrays::UV> &hairUVs, const std::vector<float> &hairTransps,
 		std::vector<luxrays::Point> &meshVerts, std::vector<luxrays::Normal> &meshNorms,
 		std::vector<luxrays::Triangle> &meshTris, std::vector<luxrays::UV> &meshUVs, std::vector<luxrays::Spectrum> &meshCols,
-		std::vector<float> &meshTransps) const;
+		std::vector<float> &meshTransps, std::vector<luxrays::Vector> &meshTangents,
+		std::vector<float> &meshStrandUs) const;
 
 	// Tessellation options
 	u_int adaptiveMaxDepth;
