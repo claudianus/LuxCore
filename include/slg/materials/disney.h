@@ -46,13 +46,17 @@ public:
 		TextureConstPtr anisotropic,
 		TextureConstPtr sheen,
 		TextureConstPtr sheenTint,
-		TextureConstPtr filmAmount, 
-		TextureConstPtr filmThickness, 
-		TextureConstPtr filmIor
+		TextureConstPtr filmAmount,
+		TextureConstPtr filmThickness,
+		TextureConstPtr filmIor,
+		TextureConstPtr transmission,
+		TextureConstPtr transmissionRoughness,
+		TextureConstPtr ior,
+		TextureConstPtr cauchyB
 	);
 
 	virtual MaterialType GetType() const { return DISNEY; }
-	virtual BSDFEvent GetEventTypes() const { return GLOSSY | REFLECT; };
+	virtual BSDFEvent GetEventTypes() const { return GLOSSY | REFLECT | TRANSMIT; };
 
 	virtual luxrays::Spectrum Albedo(
 		const HitPoint &hitPoint
@@ -112,6 +116,10 @@ public:
 	TextureConstPtr GetFilmAmount() const { return filmAmount; }
 	TextureConstPtr GetFilmThickness() const { return filmThickness; }
 	TextureConstPtr GetFilmIOR() const { return filmIor; }
+	TextureConstPtr GetTransmission() const { return Transmission; }
+	TextureConstPtr GetTransmissionRoughness() const { return TransmissionRoughness; }
+	TextureConstPtr GetIOR() const { return Ior; }
+	TextureConstPtr GetCauchyB() const { return CauchyB; }
 
 private:
 	TextureConstPtr BaseColor;
@@ -128,6 +136,10 @@ private:
 	TextureConstPtr filmAmount;
 	TextureConstPtr filmThickness;
 	TextureConstPtr filmIor;
+	TextureConstPtr Transmission;
+	TextureConstPtr TransmissionRoughness;
+	TextureConstPtr Ior;
+	TextureConstPtr CauchyB;
 
 	void UpdateGlossiness();
 
@@ -141,8 +153,9 @@ private:
 	float SmithG_GGX(const float NdotV, const float alphaG) const;
 	float Schlick_Weight(const float cosi) const;
 	void Anisotropic_Params(const float anisotropic, const float roughness, float &ax, float &ay) const;
-	void ComputeRatio(const float metallic, const float clearcoat,
-			float &RatioGlossy, float &diffuseWeight, float &RatioClearcoat) const;
+	void ComputeRatio(const float metallic, const float clearcoat, const float transmission,
+			float &RatioGlossy, float &diffuseWeight, float &RatioClearcoat,
+			float &ratioTransmit) const;
 
 	luxrays::Spectrum DisneyDiffuse(const luxrays::Spectrum &color, const float roughness,
 			const float NdotL, const float NdotV, const float LdotH) const;
@@ -159,13 +172,15 @@ private:
 	luxrays::Spectrum DisneySheen(const luxrays::Spectrum &color, const float sheen,
 			const float sheenTint, const float LdotH) const;
 	
-	luxrays::Spectrum DisneyEvaluate(const bool fromLight, 
+	luxrays::Spectrum DisneyEvaluate(const bool fromLight,
 		const luxrays::Spectrum &color,
 		const float subsurface, const float roughness,
 		const float metallic, const float specular, const float specularTint,
 		const float clearcoat, const float clearcoatGloss, const float anisotropicGloss,
 		const float sheen, const float sheenTint, const float localFilmAmount, const float localFilmThickness,
-		const float localFilmIor, const Vector &localLightDir, const Vector &localEyeDir, 
+		const float localFilmIor, const float transmission, const float transmissionRoughness,
+		const float nc, const float nt, const float cauchyB,
+		const Vector &localLightDir, const Vector &localEyeDir,
 		BSDFEvent *event, float *directPdfW, float *reversePdfW) const;
 
 	luxrays::Vector DisneyDiffuseSample(const luxrays::Vector &wo, float u0, float u1) const;
@@ -176,6 +191,8 @@ private:
 
 	void DisneyPdf(const bool fromLight, const float roughness, const float metallic,
 			const float clearcoat, const float clearcoatGloss, const float anisotropic,
+			const float transmission, const float transmissionRoughness,
+			const float nc, const float nt, const float cauchyB,
 			const Vector &localLightDir, const Vector &localEyeDir,
 			float *directPdfW, float *reversePdfW) const;
 	void DiffusePdf(const bool fromLight,
@@ -185,6 +202,10 @@ private:
 			const luxrays::Vector &localLightDir, const luxrays::Vector &localEyeDir,
 			float *directPdfW, float *reversePdfW) const;
 	void ClearcoatPdf(const bool fromLight, const float clearcoatGloss,
+			const luxrays::Vector &localLightDir, const luxrays::Vector &localEyeDir,
+			float *directPdfW, float *reversePdfW) const;
+	void TransmissionPdf(const bool fromLight, const float transmissionRoughness,
+			const float nc, const float nt, const float cauchyB,
 			const luxrays::Vector &localLightDir, const luxrays::Vector &localEyeDir,
 			float *directPdfW, float *reversePdfW) const;
 };

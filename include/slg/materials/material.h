@@ -44,7 +44,7 @@ typedef enum {
 	MATTE, MIRROR, GLASS, ARCHGLASS, MIX, NULLMAT, MATTETRANSLUCENT,
 	GLOSSY2, METAL2, ROUGHGLASS, VELVET, CLOTH, CARPAINT, ROUGHMATTE,
 	ROUGHMATTETRANSLUCENT, GLOSSYTRANSLUCENT, GLOSSYCOATING, DISNEY,
-	TWOSIDED,
+	TWOSIDED, HAIR,
 
 	// Volumes
 	HOMOGENEOUS_VOL, CLEAR_VOL, HETEROGENEOUS_VOL
@@ -294,6 +294,17 @@ protected:
 
 extern float ExtractExteriorIors(const HitPoint &hitPoint, TextureConstPtr exteriorIor);
 extern float ExtractInteriorIors(const HitPoint &hitPoint, TextureConstPtr interiorIor);
+
+// Cauchy dispersion: IOR at waveLength (nm) from the mean IOR (Cauchy-A)
+// and the dispersion coefficient (Cauchy-B)
+extern float WaveLength2IOR(const float waveLength, const float IOR, const float B);
+// Spectral-aware variants (S2): with spectral transport active and B > 0,
+// DispersiveIOR returns the hero-wavelength IOR (the direction-defining
+// wavelength) and DispersiveFresnelR returns the per-bin dielectric
+// reflectance. Otherwise they reduce to nt and CauchyEvaluate(nt/nc).
+extern float DispersiveIOR(const float nt, const float cauchyB);
+extern luxrays::Spectrum DispersiveFresnelR(const float nt, const float nc,
+		const float cauchyB, const float cosTheta);
 
 //------------------------------------------------------------------------------
 // Coating absorption

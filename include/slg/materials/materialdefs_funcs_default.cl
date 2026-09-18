@@ -97,12 +97,22 @@ OPENCL_FORCE_INLINE void DefaultMaterial_GetEmittedRadiance(__global const Mater
 	EvalStack_PopFloat(oneOverPrimitiveArea);
 
 	const uint emitTexIndex = material->emitTexIndex;
+#if defined(SLG_SPECTRAL)
+	// Emission-context eval: leaf RGB producers pick the illuminant Smits
+	// basis (mirrors CPU GetEmissionSpectrumValue). The hitPoint is a
+	// task-local buffer; the flag is restored after the eval.
+	const uint prevEmissionEval = hitPoint->spectralEmissionEval;
+	((__global HitPoint *)hitPoint)->spectralEmissionEval = 1u;
+#endif
 	const float3 emittedRadiance = (emitTexIndex == NULL_INDEX) ?
 		BLACK :
 		(VLOAD3F(material->emittedFactor.c) *
 		(material->usePrimitiveArea ? oneOverPrimitiveArea : 1.f) *
 		clamp(Texture_GetSpectrumValue(emitTexIndex, hitPoint
 				TEXTURES_PARAM), BLACK, MAKE_FLOAT3(INFINITY, INFINITY, INFINITY)));
+#if defined(SLG_SPECTRAL)
+	((__global HitPoint *)hitPoint)->spectralEmissionEval = prevEmissionEval;
+#endif
 
 	EvalStack_PushFloat3(emittedRadiance);
 }

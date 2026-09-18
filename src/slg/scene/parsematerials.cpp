@@ -51,6 +51,7 @@
 #include "slg/materials/roughmattetranslucent.h"
 #include "slg/materials/velvet.h"
 #include "slg/materials/disney.h"
+#include "slg/materials/hairmat.h"
 #include "slg/materials/twosided.h"
 
 #include "slg/textures/texture.h"
@@ -485,6 +486,10 @@ MaterialUPtr Scene::CreateMaterial(
 		auto nu = parseTex("uroughness", {.1f});
 		auto nv = parseTex("vroughness", {.1f});
 
+		TextureConstPtr cauchyB = nullptr;
+		if (isDefined("cauchyb"))
+			cauchyB = parseTex("cauchyb", {0.f, 0.f, 0.f});
+
 		TextureConstPtr filmThickness = nullptr;
 		if (isDefined("filmthickness"))
 			filmThickness = parseTex("filmthickness", {0.f});
@@ -495,7 +500,7 @@ MaterialUPtr Scene::CreateMaterial(
 
 		mat = std::make_unique<RoughGlassMaterial>(
 			frontTransparencyTex, backTransparencyTex, emissionTex, bumpTex,
-			kr, kt, exteriorIor, interiorIor, nu, nv, filmThickness, filmIor
+			kr, kt, exteriorIor, interiorIor, nu, nv, cauchyB, filmThickness, filmIor
 		);
 	} else if (matType == "velvet") {
 		auto kd = parseTex("kd", {.5f, .5f, .5f});
@@ -671,6 +676,17 @@ MaterialUPtr Scene::CreateMaterial(
 		auto anisotropic = parseTex("anisotropic", {0.f});
 		auto sheen = parseTex("sheen", {0.f});
 		auto sheenTint = parseTex("sheentint", {0.f});
+		// Integrated dielectric transmission lobe (Principled-style). When
+		// transmission > 0 the material refracts instead of only reflecting.
+		auto transmission = parseTex("transmission", {0.f});
+		// Defaults to the base roughness when not specified
+		TextureConstPtr transmissionRoughness = nullptr;
+		if (isDefined("transmissionroughness"))
+			transmissionRoughness = parseTex("transmissionroughness", {0.f});
+		auto ior = parseTex("ior", {1.5f});
+		TextureConstPtr cauchyB = nullptr;
+		if (isDefined("cauchyb"))
+			cauchyB = parseTex("cauchyb", {0.f});
 
 		TextureConstPtr filmAmount = nullptr;
 		if (isDefined("filmamount"))
@@ -688,7 +704,34 @@ MaterialUPtr Scene::CreateMaterial(
 			frontTransparencyTex, backTransparencyTex, emissionTex, bumpTex,
 			baseColor, subsurface, roughness, metallic,
 			specular, specularTint, clearcoat, clearcoatGloss, anisotropic,
-			sheen, sheenTint, filmAmount, filmThickness, filmIor
+			sheen, sheenTint, filmAmount, filmThickness, filmIor,
+			transmission, transmissionRoughness, ior, cauchyB
+		);
+	} else if (matType == "hairmat") {
+		// Absorption coefficient (mutually exclusive with color/eumelanin)
+		TextureConstPtr sigmaA = nullptr;
+		if (isDefined("sigma_a"))
+			sigmaA = parseTex("sigma_a", {0.f});
+		// Direct dye color (mutually exclusive with sigma_a/melanin)
+		TextureConstPtr color = nullptr;
+		if (isDefined("color"))
+			color = parseTex("color", {0.5f, 0.5f, 0.5f});
+		// Melanin concentration model (used when neither of the above is set)
+		TextureConstPtr eumelanin = nullptr;
+		if (isDefined("eumelanin"))
+			eumelanin = parseTex("eumelanin", {1.3f});
+		TextureConstPtr pheomelanin = nullptr;
+		if (isDefined("pheomelanin"))
+			pheomelanin = parseTex("pheomelanin", {0.f});
+		auto eta = parseTex("eta", {1.55f});
+		auto betaM = parseTex("beta_m", {0.3f});
+		auto betaN = parseTex("beta_n", {0.3f});
+		auto alpha = parseTex("alpha", {2.f});
+
+		mat = std::make_unique<HairMaterial>(
+			frontTransparencyTex, backTransparencyTex, emissionTex, bumpTex,
+			sigmaA, color, eumelanin, pheomelanin,
+			eta, betaM, betaN, alpha
 		);
 	} else if (matType == "twosided") {
 		MaterialConstRef frontMat = matDefs.GetMaterial(parseString("frontmaterial", "front"));

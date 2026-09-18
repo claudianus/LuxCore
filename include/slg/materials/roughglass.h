@@ -36,7 +36,7 @@ public:
 			TexRef refl, TexRef trans,
 			TexRef exteriorIorFact, TexRef interiorIorFact,
 			TexRef u, TexRef v,
-			TexRef filmThickness, TexRef filmIor);
+			TexRef cauchyB, TexRef filmThickness, TexRef filmIor);
 
 	virtual MaterialType GetType() const { return ROUGHGLASS; }
 	virtual BSDFEvent GetEventTypes() const { return GLOSSY | REFLECT | TRANSMIT; };
@@ -65,6 +65,7 @@ public:
 	TexRef GetInteriorIOR() const { return interiorIor; }
 	TexRef GetNu() const { return nu; }
 	TexRef GetNv() const { return nv; }
+	TexRef GetCauchyB() const { return cauchyB; }
 	TexRef GetFilmThickness() const { return filmThickness; }
 	TexRef GetFilmIOR() const { return filmIor; }
 
@@ -75,6 +76,7 @@ private:
 	TexRef interiorIor;
 	TexRef nu;
 	TexRef nv;
+	TexRef cauchyB;
 	TexRef filmThickness;
 	TexRef filmIor;
 };

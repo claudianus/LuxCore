@@ -180,6 +180,12 @@ OPENCL_FORCE_NOT_INLINE uint Material_EvalOp(
 			TwoSidedMaterial_EvalOp(material, evalType, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
 			break;
 		//----------------------------------------------------------------------
+		// HAIR
+		//----------------------------------------------------------------------
+		case HAIR:
+			HairMaterial_EvalOp(material, evalType, evalStack, evalStackOffset, hitPoint MATERIALS_PARAM);
+			break;
+		//----------------------------------------------------------------------
 		// CLEAR_VOL
 		//----------------------------------------------------------------------
 		case CLEAR_VOL:

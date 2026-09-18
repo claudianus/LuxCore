@@ -80,7 +80,14 @@ OPENCL_FORCE_INLINE void RoughGlassMaterial_Evaluate(__global const Material* re
 	
 	const float nc = ExtractExteriorIors(hitPoint, material->roughglass.exteriorIorTexIndex TEXTURES_PARAM);
 	const float nt = ExtractInteriorIors(hitPoint, material->roughglass.interiorIorTexIndex TEXTURES_PARAM);
-	const float ntc = nt / nc;
+	const float cauchyB = (material->roughglass.cauchyBTex != NULL_INDEX) ? Texture_GetFloatValue(material->roughglass.cauchyBTex, hitPoint TEXTURES_PARAM) : -1.f;
+#if defined(SLG_SPECTRAL)
+	// Dispersion: the direction-defining wavelength is the hero bin
+	const float ntEff = Spectral_DispersiveIOR(nt, cauchyB, hitPoint);
+#else
+	const float ntEff = nt;
+#endif
+	const float ntc = ntEff / nc;
 
 	const float nuVal = Texture_GetFloatValue(material->roughglass.nuTexIndex, hitPoint TEXTURES_PARAM);
 	const float nvVal = Texture_GetFloatValue(material->roughglass.nvTexIndex, hitPoint TEXTURES_PARAM);
@@ -99,7 +106,7 @@ OPENCL_FORCE_INLINE void RoughGlassMaterial_Evaluate(__global const Material* re
 		// Transmit
 
 		const bool entering = (CosTheta(lightDir) > 0.f);
-		const float eta = entering ? (nc / nt) : ntc;
+		const float eta = entering ? (nc / ntEff) : ntc;
 
 		float3 wh = eta * lightDir + eyeDir;
 		if (wh.z < 0.f)
@@ -117,7 +124,12 @@ OPENCL_FORCE_INLINE void RoughGlassMaterial_Evaluate(__global const Material* re
 		const float D = SchlickDistribution_D(roughness, wh, anisotropy);
 		const float G = SchlickDistribution_G(roughness, lightDir, eyeDir);
 		const float specPdf = SchlickDistribution_Pdf(roughness, wh, anisotropy);
-		const float F = FresnelCauchy_Evaluate(ntc, cosThetaOH);
+#if defined(SLG_SPECTRAL)
+		const float3 F = Spectral_DispersiveFresnelR(nt, nc, cauchyB, cosThetaOH, hitPoint);
+#else
+		const float3 F = MAKE_FLOAT3(FresnelCauchy_Evaluate(ntc, cosThetaOH),
+				FresnelCauchy_Evaluate(ntc, cosThetaOH), FresnelCauchy_Evaluate(ntc, cosThetaOH));
+#endif
 
 		directPdfW = threshold * specPdf * (fabs(cosThetaOH) * eta * eta) / lengthSquared;
 
@@ -126,7 +138,7 @@ OPENCL_FORCE_INLINE void RoughGlassMaterial_Evaluate(__global const Material* re
 
 		result = (fabs(cosThetaOH) * cosThetaIH * D *
 			G / (cosThetaI * lengthSquared)) *
-			kt * (1.f - F);
+			kt * (WHITE - F);
 
         event = GLOSSY | TRANSMIT;
 	} else {
@@ -148,7 +160,12 @@ OPENCL_FORCE_INLINE void RoughGlassMaterial_Evaluate(__global const Material* re
 		const float D = SchlickDistribution_D(roughness, wh, anisotropy);
 		const float G = SchlickDistribution_G(roughness, lightDir, eyeDir);
 		const float specPdf = SchlickDistribution_Pdf(roughness, wh, anisotropy);
-		const float F = FresnelCauchy_Evaluate(ntc, cosThetaH);
+#if defined(SLG_SPECTRAL)
+		const float3 F = Spectral_DispersiveFresnelR(nt, nc, cauchyB, cosThetaH, hitPoint);
+#else
+		const float3 F = MAKE_FLOAT3(FresnelCauchy_Evaluate(ntc, cosThetaH),
+				FresnelCauchy_Evaluate(ntc, cosThetaH), FresnelCauchy_Evaluate(ntc, cosThetaH));
+#endif
 
 		directPdfW = (1.f - threshold) * specPdf / (4.f * fabs(dot(lightDir, wh)));
 
@@ -217,7 +234,14 @@ OPENCL_FORCE_INLINE void RoughGlassMaterial_Sample(__global const Material* rest
 
 	const float nc = ExtractExteriorIors(hitPoint, material->roughglass.exteriorIorTexIndex TEXTURES_PARAM);
 	const float nt = ExtractInteriorIors(hitPoint, material->roughglass.interiorIorTexIndex TEXTURES_PARAM);
-	const float ntc = nt / nc;
+	const float cauchyB = (material->roughglass.cauchyBTex != NULL_INDEX) ? Texture_GetFloatValue(material->roughglass.cauchyBTex, hitPoint TEXTURES_PARAM) : -1.f;
+#if defined(SLG_SPECTRAL)
+	// Dispersion: the direction-defining wavelength is the hero bin
+	const float ntEff = Spectral_DispersiveIOR(nt, cauchyB, hitPoint);
+#else
+	const float ntEff = nt;
+#endif
+	const float ntc = ntEff / nc;
 
 	const float coso = fabs(fixedDir.z);
 
@@ -244,7 +268,7 @@ OPENCL_FORCE_INLINE void RoughGlassMaterial_Sample(__global const Material* rest
 		// Transmit
 
 		const bool entering = (CosTheta(fixedDir) > 0.f);
-		const float eta = entering ? (nc / nt) : ntc;
+		const float eta = entering ? (nc / ntEff) : ntc;
 		const float eta2 = eta * eta;
 		const float sinThetaIH2 = eta2 * fmax(0.f, 1.f - cosThetaOH * cosThetaOH);
 		if (sinThetaIH2 >= 1.f) {
@@ -268,7 +292,11 @@ OPENCL_FORCE_INLINE void RoughGlassMaterial_Sample(__global const Material* rest
 		float factor = (d / specPdf) * G * fabs(cosThetaOH) / threshold;
 
 		//if (!hitPoint.fromLight) {
+#if defined(SLG_SPECTRAL)
+			const float3 F = Spectral_DispersiveFresnelR(nt, nc, cauchyB, cosThetaIH, hitPoint);
+#else
 			const float F = FresnelCauchy_Evaluate(ntc, cosThetaIH);
+#endif
 			result = (factor / coso) * kt * (1.f - F);
 		//} else {
 		//	const Spectrum F = FresnelCauchy_Evaluate(ntc, cosThetaOH);
@@ -277,6 +305,11 @@ OPENCL_FORCE_INLINE void RoughGlassMaterial_Sample(__global const Material* rest
 
 		pdfW *= threshold;
 		event = GLOSSY | TRANSMIT;
+#if defined(SLG_SPECTRAL)
+		// Dispersive refraction terminates the secondary wavelengths
+		if (cauchyB > 0.f)
+			result *= Spectral_CollapseToHero(&((__global HitPoint *)hitPoint)->spectralHeroAlive);
+#endif
 	} else {
 		// Reflect
 		pdfW = specPdf / (4.f * fabs(cosThetaOH));
@@ -294,7 +327,11 @@ OPENCL_FORCE_INLINE void RoughGlassMaterial_Sample(__global const Material* rest
 		const float G = SchlickDistribution_G(roughness, fixedDir, sampledDir);
 		float factor = (d / specPdf) * G * fabs(cosThetaOH) / (1.f - threshold);
 
+#if defined(SLG_SPECTRAL)
+		const float3 F = Spectral_DispersiveFresnelR(nt, nc, cauchyB, cosThetaOH, hitPoint);
+#else
 		const float F = FresnelCauchy_Evaluate(ntc, cosThetaOH);
+#endif
 		//factor /= (!hitPoint.fromLight) ? coso : cosi;
 		factor /= coso;
 		result = factor * F * kr;

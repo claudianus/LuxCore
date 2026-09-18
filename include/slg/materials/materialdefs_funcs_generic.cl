@@ -335,4 +335,47 @@ OPENCL_FORCE_INLINE float FresnelCauchy_Evaluate(const float eta, const float co
 		return FrDiel2(fabs(cosi), sqrt(fmax(0.f, 1.f - sint2)),
 			entering ? eta : 1.f / eta);
 }
+
+#if defined(SLG_SPECTRAL)
+// Device mirrors of slg::WaveLength2IOR / DispersiveIOR /
+// DispersiveFresnelR (material.cpp): Cauchy IOR at the hero wavelength for
+// direction-defining events, per-bin dielectric Fresnel for reflectance.
+
+OPENCL_FORCE_INLINE float Spectral_WaveLength2IOR(const float waveLength,
+		const float ior, const float B) {
+	// Cauchy's equation (waveLength in nm, Cauchy lambda in micrometers)
+	return ior + B / ((waveLength * 0.001f) * (waveLength * 0.001f));
+}
+
+OPENCL_FORCE_INLINE float Spectral_DispersiveIOR(const float nt,
+		const float cauchyB, __global const HitPoint *hitPoint) {
+	if (cauchyB <= 0.f)
+		return nt;
+	const uint hero = min((hitPoint->spectralHeroAlive & SLG_SW_HERO_MASK) >> SLG_SW_HERO_SHIFT,
+			SLG_SPECTRAL_BINS - 1u);
+	return Spectral_WaveLength2IOR(hitPoint->spectralW[hero], nt, cauchyB);
+}
+
+OPENCL_FORCE_INLINE float3 Spectral_DispersiveFresnelR(const float nt,
+		const float nc, const float cauchyB, const float cosTheta,
+		__global const HitPoint *hitPoint) {
+	if (cauchyB <= 0.f)
+		return MAKE_FLOAT3(FresnelCauchy_Evaluate(nt / nc, cosTheta),
+				FresnelCauchy_Evaluate(nt / nc, cosTheta),
+				FresnelCauchy_Evaluate(nt / nc, cosTheta));
+
+	// Per-bin dielectric Fresnel: each sampled wavelength sees its own IOR
+	const uint aliveMask = hitPoint->spectralHeroAlive & SLG_SW_ALIVE_MASK;
+	float3 F = BLACK;
+	for (uint i = 0; i < SLG_SPECTRAL_BINS; ++i) {
+		if (aliveMask & (1u << i)) {
+			const float r = FresnelCauchy_Evaluate(
+					Spectral_WaveLength2IOR(hitPoint->spectralW[i], nt, cauchyB) / nc,
+					cosTheta);
+			if (i == 0) F.x = r; else if (i == 1) F.y = r; else F.z = r;
+		}
+	}
+	return F;
+}
+#endif
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

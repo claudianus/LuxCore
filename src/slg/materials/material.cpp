@@ -18,6 +18,7 @@
 
 #include <boost/lexical_cast.hpp>
 
+#include "luxrays/core/color/spectral.h"
 #include "luxrays/core/geometry/frame.h"
 #include "slg/core/sphericalfunction/sphericalfunction.h"
 #include "slg/materials/material.h"
@@ -114,8 +115,8 @@ Spectrum Material::GetPassThroughTransparency(const HitPoint &hitPoint,
 
 Spectrum Material::GetEmittedRadiance(const HitPoint &hitPoint, const float oneOverPrimitiveArea) const {
 	if (emittedTex) {
-		return (emittedFactor * (usePrimitiveArea ? oneOverPrimitiveArea : 1.f)) *
-				emittedTex->GetSpectrumValue(hitPoint).Clamp();
+		return (Spectral::Emission(emittedFactor) * (usePrimitiveArea ? oneOverPrimitiveArea : 1.f)) *
+				emittedTex->GetEmissionSpectrumValue(hitPoint).Clamp();
 	} else
 		return Spectrum();
 }
@@ -344,6 +345,7 @@ string Material::MaterialType2String(const MaterialType type) {
 		case GLOSSYCOATING: return "GLOSSYCOATING";
 		case DISNEY: return "DISNEY";
 		case TWOSIDED: return "TWOSIDED";
+		case HAIR: return "HAIR";
 
 		// Volumes
 		case HOMOGENEOUS_VOL: return "HOMOGENEOUS_VOL";
@@ -385,6 +387,44 @@ float slg::ExtractInteriorIors(const HitPoint &hitPoint, TextureConstPtr interio
 		nt = hitPoint.interiorVolume->GetIOR(hitPoint);
 
 	return nt;
+}
+
+float slg::WaveLength2IOR(const float waveLength, const float IOR, const float B) {
+	// Cauchy's equation for relationship between the refractive index and wavelength
+	// note: Cauchy's lambda is expressed in micrometers while waveLength is in nanometers
+
+	// This is the formula suggested by Neo here, with a changed naming convention from B->A and C-> B:
+	// https://github.com/LuxCoreRender/BlendLuxCore/commit/d3fed046ab62e18226e410b42a16ca1bccefb530#commitcomment-26617643
+
+	// Use the user input IOR directly as Cauchy-A. Equivalent to the B used by old LuxRender.
+	const float A = IOR;
+
+	// Cauchy's equation
+	const float cauchyEq = A + B / Sqr(waveLength / 1000.f);
+
+	return cauchyEq;
+}
+
+float slg::DispersiveIOR(const float nt, const float cauchyB) {
+	const PathWavelengths *sw = Spectral::Current();
+	return (sw && cauchyB > 0.f) ?
+		WaveLength2IOR(sw->w[sw->hero], nt, cauchyB) : nt;
+}
+
+Spectrum slg::DispersiveFresnelR(const float nt, const float nc,
+		const float cauchyB, const float cosTheta) {
+	const PathWavelengths *sw = Spectral::Current();
+	if (!(sw && cauchyB > 0.f))
+		return Spectrum(FresnelTexture::CauchyEvaluate(nt / nc, cosTheta));
+
+	// Per-bin dielectric Fresnel: each sampled wavelength sees its own IOR
+	Spectrum F(0.f);
+	for (u_int i = 0; i < SPECTRAL_BINS; ++i) {
+		if (sw->aliveMask & (1U << i))
+			F.c[i] = FresnelTexture::CauchyEvaluate(
+					WaveLength2IOR(sw->w[i], nt, cauchyB) / nc, cosTheta);
+	}
+	return F;
 }
 
 //------------------------------------------------------------------------------

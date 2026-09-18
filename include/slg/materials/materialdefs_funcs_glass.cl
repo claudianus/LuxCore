@@ -127,7 +127,7 @@ OPENCL_FORCE_INLINE float GlassMaterial_WaveLength2IOR(const float waveLength, c
 
 OPENCL_FORCE_INLINE float3 GlassMaterial_EvalSpecularReflection(__global const HitPoint *hitPoint,
 		const float3 localFixedDir, const float3 kr,
-		const float nc, const float nt,
+		const float nc, const float nt, const float cauchyB,
 		float3 *sampledDir, const float localFilmThickness, const float localFilmIor) {
 	if (Spectrum_IsBlack(kr))
 		return BLACK;
@@ -135,8 +135,15 @@ OPENCL_FORCE_INLINE float3 GlassMaterial_EvalSpecularReflection(__global const H
 	const float costheta = CosTheta(localFixedDir);
 	*sampledDir = MAKE_FLOAT3(-localFixedDir.x, -localFixedDir.y, localFixedDir.z);
 
+#if defined(SLG_SPECTRAL)
+	// Per-bin dielectric Fresnel under spectral transport (each wavelength
+	// sees its own Cauchy IOR); scalar Fresnel otherwise.
+	const float3 result = kr * Spectral_DispersiveFresnelR(nt, nc, cauchyB,
+			costheta, hitPoint);
+#else
 	const float ntc = nt / nc;
 	const float3 result = kr * FresnelCauchy_Evaluate(ntc, costheta);
+#endif
 	
 	if (localFilmThickness > 0.f) {
 		const float3 filmColor = CalcFilmColor(localFixedDir, localFilmThickness, localFilmIor);
@@ -155,6 +162,17 @@ OPENCL_FORCE_INLINE float3 GlassMaterial_EvalSpecularTransmission(__global const
 	// Compute transmitted ray direction
 	float3 lkt;
 	float lnt;
+#if defined(SLG_SPECTRAL)
+	if (cauchyB > 0.f) {
+		// Hero-wavelength refraction: the direction-defining wavelength is
+		// the path's hero bin (no per-path RGB tint -- the bins already are
+		// the spectral samples).
+		const uint hero = min((hitPoint->spectralHeroAlive & SLG_SW_HERO_MASK) >> SLG_SW_HERO_SHIFT,
+				SLG_SPECTRAL_BINS - 1u);
+		lnt = GlassMaterial_WaveLength2IOR(hitPoint->spectralW[hero], nt, cauchyB);
+		lkt = kt;
+	} else
+#endif
 	if (cauchyB > 0.f) {
 		// Select the wavelength to sample
 		const float waveLength = mix(380.f, 780.f, u0);
@@ -236,7 +254,7 @@ OPENCL_FORCE_INLINE void GlassMaterial_Sample(__global const Material* restrict 
 	
 	float3 reflLocalSampledDir;
 	const float3 refl = GlassMaterial_EvalSpecularReflection(hitPoint, fixedDir,
-			kr, nc, nt, &reflLocalSampledDir, localFilmThickness, localFilmIor);
+			kr, nc, nt, cauchyB, &reflLocalSampledDir, localFilmThickness, localFilmIor);
 
 	// Decide to transmit or reflect
 	float threshold;
@@ -271,8 +289,16 @@ OPENCL_FORCE_INLINE void GlassMaterial_Sample(__global const Material* restrict 
 
 		event = SPECULAR | TRANSMIT;
 		pdfW = threshold;
-	
+
 		result = trans;
+#if defined(SLG_SPECTRAL)
+		if (cauchyB > 0.f)
+			// Dispersive transmission: only the hero wavelength survives
+			// (uniform pick -> the surviving bin carries x BINS weight).
+			// The alive mask is read back into the SampleResult after
+			// BSDF_Sample so it survives the next intersection.
+			result *= Spectral_CollapseToHero(&((__global HitPoint *)hitPoint)->spectralHeroAlive);
+#endif
 	} else {
 		// Reflect
 

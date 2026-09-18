@@ -16,6 +16,7 @@
  * limitations under the License.                                          *
  ***************************************************************************/
 
+#include "luxrays/core/color/spectral.h"
 #include "slg/textures/fresnel/fresneltexture.h"
 #include "slg/materials/glass.h"
 #include "slg/materials/thinfilmcoating.h"
@@ -100,30 +101,10 @@ static Spectrum WaveLength2RGB(const float waveLength) {
 	return result * normFactor;
 }
 
-static float WaveLength2IOR(const float waveLength, const float IOR, const float B) {
-	// Cauchy's equation for relationship between the refractive index and wavelength
-	// note: Cauchy's lambda is expressed in micrometers while waveLength is in nanometers
-
-	// This is the formula suggested by Neo here, with a changed naming convention from B->A and C-> B:
-	// https://github.com/LuxCoreRender/BlendLuxCore/commit/d3fed046ab62e18226e410b42a16ca1bccefb530#commitcomment-26617643
-	
-	// Compute Cauchy-A assuming the user input IOR at 587.56 nm 
-	// (Fraunhofer d-line, Helium, used in one definition of the Abbe number)
-	//const float A = IOR - B / Sqr(587.56f / 1000.f);
-
-	// Use the user input IOR directly as Cauchy-A. Equivalent to the B used by old LuxRender.
-	const float A = IOR;
-
-	// Cauchy's equation
-	const float cauchyEq = A + B / Sqr(waveLength / 1000.f);
-
-	return cauchyEq;
-}
-
 Spectrum GlassMaterial::EvalSpecularReflection(const HitPoint &hitPoint,
 		const Vector &localFixedDir, const Spectrum &kr,
-		const float nc, const float nt,
-		Vector *localSampledDir, 
+		const float nc, const float nt, const float cauchyB,
+		Vector *localSampledDir,
 		const float localFilmThickness, const float localFilmIor) {
 	if (kr.Black())
 		return Spectrum();
@@ -131,8 +112,10 @@ Spectrum GlassMaterial::EvalSpecularReflection(const HitPoint &hitPoint,
 	const float cosTheta = CosTheta(localFixedDir);
 	*localSampledDir = Vector(-localFixedDir.x, -localFixedDir.y, localFixedDir.z);
 
-	const float ntc = nt / nc;
-	const Spectrum result = kr * FresnelTexture::CauchyEvaluate(ntc, cosTheta);
+	// Per-bin Fresnel under dispersion: each sampled wavelength reflects at
+	// its own IOR (grazing-angle color separation). Reduces to the scalar
+	// CauchyEvaluate when spectral transport is off or cauchyB == 0.
+	const Spectrum result = kr * DispersiveFresnelR(nt, nc, cauchyB, cosTheta);
 
 	if (localFilmThickness > 0.f) {
 		const Spectrum filmColor = CalcFilmColor(localFixedDir, localFilmThickness, localFilmIor);
@@ -152,12 +135,22 @@ Spectrum GlassMaterial::EvalSpecularTransmission(const HitPoint &hitPoint,
 	Spectrum lkt;
 	float lnt;
 	if (cauchyB > 0.f) {
-		// Select the wavelength to sample
-		const float waveLength = Lerp(u0, 380.f, 780.f);
+		const PathWavelengths *sw = Spectral::Current();
+		if (sw) {
+			// Hero-wavelength dispersion (S2): refract at the path's hero
+			// wavelength; kt stays in spectral bins (no RGB tint). The
+			// bin collapse happens in Sample() once the transmit branch
+			// is actually picked.
+			lnt = WaveLength2IOR(sw->w[sw->hero], nt, cauchyB);
+			lkt = kt;
+		} else {
+			// Select the wavelength to sample
+			const float waveLength = Lerp(u0, 380.f, 780.f);
 
-		lnt = WaveLength2IOR(waveLength, nt, cauchyB);
+			lnt = WaveLength2IOR(waveLength, nt, cauchyB);
 
-		lkt = kt * WaveLength2RGB(waveLength);
+			lkt = kt * WaveLength2RGB(waveLength);
+		}
 	} else {
 		lnt = nt;
 		lkt = kt;
@@ -209,7 +202,7 @@ Spectrum GlassMaterial::Sample(const HitPoint &hitPoint,
 	const float localFilmIor = (localFilmThickness > 0.f && filmIor) ? filmIor->GetFloatValue(hitPoint) : 1.f;
 	Vector reflLocalSampledDir;
 	const Spectrum refl = EvalSpecularReflection(hitPoint, localFixedDir,
-			kr, nc, nt, &reflLocalSampledDir, localFilmThickness, localFilmIor);
+			kr, nc, nt, cauchyBValue, &reflLocalSampledDir, localFilmThickness, localFilmIor);
 
 	// Decide to transmit or reflect
 	float threshold;
@@ -240,8 +233,12 @@ Spectrum GlassMaterial::Sample(const HitPoint &hitPoint,
 
 		*event = SPECULAR | TRANSMIT;
 		*pdfW = threshold;
-	
+
 		result = trans;
+		// Dispersive refraction terminates the secondary wavelengths:
+		// the surviving hero bin carries the path (uniform-pick weight).
+		if (cauchyBValue > 0.f)
+			result *= Spectral::CollapseToHero();
 	} else {
 		// Reflect
 

@@ -69,7 +69,7 @@ typedef enum {
 	MATTE, MIRROR, GLASS, ARCHGLASS, MIX, NULLMAT, MATTETRANSLUCENT,
 	GLOSSY2, METAL2, ROUGHGLASS, VELVET, CLOTH, CARPAINT, ROUGHMATTE,
 	ROUGHMATTETRANSLUCENT, GLOSSYTRANSLUCENT, GLOSSYCOATING, DISNEY,
-	TWOSIDED,
+	TWOSIDED, HAIR,
 			
 	// Volumes
 	HOMOGENEOUS_VOL, CLEAR_VOL, HETEROGENEOUS_VOL
@@ -150,6 +150,7 @@ typedef struct {
     unsigned int krTexIndex;
 	unsigned int ktTexIndex;
 	unsigned int exteriorIorTexIndex, interiorIorTexIndex;
+	unsigned int cauchyBTex;
 	unsigned int nuTexIndex;
 	unsigned int nvTexIndex;
 	unsigned int filmThicknessTexIndex;
@@ -292,7 +293,22 @@ typedef struct {
 	unsigned int filmAmountTexIndex;
 	unsigned int filmThicknessTexIndex;
 	unsigned int filmIorTexIndex;
+	unsigned int transmissionTexIndex;
+	unsigned int transmissionRoughnessTexIndex;
+	unsigned int iorTexIndex;
+	unsigned int cauchyBTexIndex;
 } DisneyParam;
+
+typedef struct {
+	unsigned int sigmaATexIndex;
+	unsigned int colorTexIndex;
+	unsigned int eumelaninTexIndex;
+	unsigned int pheomelaninTexIndex;
+	unsigned int etaTexIndex;
+	unsigned int betaMTexIndex;
+	unsigned int betaNTexIndex;
+	unsigned int alphaTexIndex;
+} HairParam;
 
 typedef struct {
 	unsigned int frontMatIndex;
@@ -387,6 +403,7 @@ typedef struct {
 		GlossyCoatingParam glossycoating;
 		DisneyParam disney;
 		TwoSidedParam twosided;
+		HairParam hair;
 		VolumeParam volume;
 	};
 } Material;

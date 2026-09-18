@@ -16,6 +16,7 @@
  * limitations under the License.                                          *
  ***************************************************************************/
 
+#include "luxrays/core/color/spectral.h"
 #include "slg/textures/fresnel/fresneltexture.h"
 #include "slg/materials/roughglass.h"
 #include "slg/materials/thinfilmcoating.h"
@@ -36,10 +37,10 @@ RoughGlassMaterial::RoughGlassMaterial(TextureConstPtr frontTransp, TextureConst
 		TextureConstPtr refl, TextureConstPtr trans,
 		TextureConstPtr exteriorIorFact, TextureConstPtr interiorIorFact,
 		TextureConstPtr u, TextureConstPtr v,
-		TextureConstPtr filmThickness, TextureConstPtr filmIor) :
+		TextureConstPtr cauchyBFact, TextureConstPtr filmThickness, TextureConstPtr filmIor) :
 			Material(frontTransp, backTransp, emitted, bump), Kr(refl), Kt(trans),
 			exteriorIor(exteriorIorFact), interiorIor(interiorIorFact), nu(u), nv(v),
-			filmThickness(filmThickness), filmIor(filmIor) {
+			cauchyB(cauchyBFact), filmThickness(filmThickness), filmIor(filmIor) {
 	glossiness = ComputeGlossiness(nu, nv);
 }
 
@@ -56,7 +57,10 @@ Spectrum RoughGlassMaterial::Evaluate(const HitPoint &hitPoint,
 
 	const float nc = ExtractExteriorIors(hitPoint, exteriorIor);
 	const float nt = ExtractInteriorIors(hitPoint, interiorIor);
-	const float ntc = nt / nc;
+	const float cauchyBValue = cauchyB ? cauchyB->GetFloatValue(hitPoint) : 0.f;
+	// Dispersion (S2): the direction-defining wavelength is the hero bin
+	const float ntEff = DispersiveIOR(nt, cauchyBValue);
+	const float ntc = ntEff / nc;
 
 	const float u = Clamp(nu->GetFloatValue(hitPoint), 1e-9f, 1.f);
 	const float v = Clamp(nv->GetFloatValue(hitPoint), 1e-9f, 1.f);
@@ -70,7 +74,7 @@ Spectrum RoughGlassMaterial::Evaluate(const HitPoint &hitPoint,
 		// Transmit
 
 		const bool entering = (CosTheta(localLightDir) > 0.f);
-		const float eta = entering ? (nc / nt) : ntc;
+		const float eta = entering ? (nc / ntEff) : ntc;
 
 		Vector wh = eta * localLightDir + localEyeDir;
 		if (wh.z < 0.f)
@@ -87,7 +91,7 @@ Spectrum RoughGlassMaterial::Evaluate(const HitPoint &hitPoint,
 		const float D = SchlickDistribution_D(roughness, wh, anisotropy);
 		const float G = SchlickDistribution_G(roughness, localLightDir, localEyeDir);
 		const float specPdf = SchlickDistribution_Pdf(roughness, wh, anisotropy);
-		const float F = FresnelTexture::CauchyEvaluate(ntc, cosThetaOH);
+		const Spectrum F = DispersiveFresnelR(nt, nc, cauchyBValue, cosThetaOH);
 
 		if (directPdfW)
 			*directPdfW = threshold * specPdf * (hitPoint.fromLight ? fabsf(cosThetaIH) : (fabsf(cosThetaOH) * eta * eta)) / lengthSquared;
@@ -97,7 +101,7 @@ Spectrum RoughGlassMaterial::Evaluate(const HitPoint &hitPoint,
 
 		const Spectrum result = (fabsf(cosThetaOH) * cosThetaIH * D *
 			G / (cosThetaI * lengthSquared)) *
-			kt * (1.f - F);
+			kt * (Spectrum(1.f) - F);
 
 		*event = GLOSSY | TRANSMIT;
 
@@ -119,7 +123,7 @@ Spectrum RoughGlassMaterial::Evaluate(const HitPoint &hitPoint,
 		const float D = SchlickDistribution_D(roughness, wh, anisotropy);
 		const float G = SchlickDistribution_G(roughness, localLightDir, localEyeDir);
 		const float specPdf = SchlickDistribution_Pdf(roughness, wh, anisotropy);
-		const float F = FresnelTexture::CauchyEvaluate(ntc, cosThetaH);
+		const Spectrum F = DispersiveFresnelR(nt, nc, cauchyBValue, cosThetaH);
 
 		if (directPdfW)
 			*directPdfW = (1.f - threshold) * specPdf / (4.f * AbsDot(localLightDir, wh));
@@ -171,7 +175,10 @@ Spectrum RoughGlassMaterial::Sample(const HitPoint &hitPoint,
 
 	const float nc = ExtractExteriorIors(hitPoint, exteriorIor);
 	const float nt = ExtractInteriorIors(hitPoint, interiorIor);
-	const float ntc = nt / nc;
+	const float cauchyBValue = cauchyB ? cauchyB->GetFloatValue(hitPoint) : 0.f;
+	// Dispersion (S2): the direction-defining wavelength is the hero bin
+	const float ntEff = DispersiveIOR(nt, cauchyBValue);
+	const float ntc = ntEff / nc;
 
 	const float coso = fabsf(localFixedDir.z);
 
@@ -194,7 +201,7 @@ Spectrum RoughGlassMaterial::Sample(const HitPoint &hitPoint,
 		// Transmit
 
 		const bool entering = (CosTheta(localFixedDir) > 0.f);
-		const float eta = entering ? (nc / nt) : ntc;
+		const float eta = entering ? (nc / ntEff) : ntc;
 		const float eta2 = eta * eta;
 		const float sinThetaIH2 = eta2 * Max(0.f, 1.f - cosThetaOH * cosThetaOH);
 		if (sinThetaIH2 >= 1.f)
@@ -216,15 +223,18 @@ Spectrum RoughGlassMaterial::Sample(const HitPoint &hitPoint,
 		float factor = (d / specPdf) * G * fabsf(cosThetaOH) / threshold;
 
 		if (!hitPoint.fromLight) {
-			const float F = FresnelTexture::CauchyEvaluate(ntc, cosThetaIH);
-			result = (factor / coso) * kt * (1.f - F);
+			const Spectrum F = DispersiveFresnelR(nt, nc, cauchyBValue, cosThetaIH);
+			result = (factor / coso) * kt * (Spectrum(1.f) - F);
 		} else {
-			const float F = FresnelTexture::CauchyEvaluate(ntc, cosThetaOH);
-			result = (factor / cosi) * kt * (1.f - F);
+			const Spectrum F = DispersiveFresnelR(nt, nc, cauchyBValue, cosThetaOH);
+			result = (factor / cosi) * kt * (Spectrum(1.f) - F);
 		}
 
 		*pdfW *= threshold;
 		*event = GLOSSY | TRANSMIT;
+		// Dispersive refraction terminates the secondary wavelengths
+		if (cauchyBValue > 0.f)
+			result *= Spectral::CollapseToHero();
 	} else {
 		// Reflect
 		*pdfW = specPdf / (4.f * fabsf(cosThetaOH));
@@ -240,7 +250,7 @@ Spectrum RoughGlassMaterial::Sample(const HitPoint &hitPoint,
 		const float G = SchlickDistribution_G(roughness, localFixedDir, *localSampledDir);
 		float factor = (d / specPdf) * G * fabsf(cosThetaOH) / (1.f - threshold);
 
-		const float F = FresnelTexture::CauchyEvaluate(ntc, cosThetaOH);
+		const Spectrum F = DispersiveFresnelR(nt, nc, cauchyBValue, cosThetaOH);
 		factor /= (!hitPoint.fromLight) ? coso : cosi;
 		result = factor * F * kr;
 		
@@ -275,7 +285,10 @@ void RoughGlassMaterial::Pdf(const HitPoint &hitPoint,
 
 	const float nc = ExtractExteriorIors(hitPoint, exteriorIor);
 	const float nt = ExtractInteriorIors(hitPoint, interiorIor);
-	const float ntc = nt / nc;
+	const float cauchyBValue = cauchyB ? cauchyB->GetFloatValue(hitPoint) : 0.f;
+	// Dispersion (S2): the direction-defining wavelength is the hero bin
+	const float ntEff = DispersiveIOR(nt, cauchyBValue);
+	const float ntc = ntEff / nc;
 
 	const float u = Clamp(nu->GetFloatValue(hitPoint), 1e-9f, 1.f);
 	const float v = Clamp(nv->GetFloatValue(hitPoint), 1e-9f, 1.f);
@@ -289,7 +302,7 @@ void RoughGlassMaterial::Pdf(const HitPoint &hitPoint,
 		// Transmit
 
 		const bool entering = (CosTheta(localLightDir) > 0.f);
-		const float eta = entering ? (nc / nt) : ntc;
+		const float eta = entering ? (nc / ntEff) : ntc;
 
 		Vector wh = eta * localLightDir + localEyeDir;
 		if (wh.z < 0.f)
@@ -345,6 +358,8 @@ void RoughGlassMaterial::AddReferencedTextures(std::unordered_set<const Texture 
 		interiorIor->AddReferencedTextures(referencedTexs);
 	nu->AddReferencedTextures(referencedTexs);
 	nv->AddReferencedTextures(referencedTexs);
+	if (cauchyB)
+		cauchyB->AddReferencedTextures(referencedTexs);
 	if (filmThickness)
 		filmThickness->AddReferencedTextures(referencedTexs);
 	if (filmIor)
@@ -363,6 +378,8 @@ void RoughGlassMaterial::UpdateTextureReferences(TextureConstRef oldTex, Texture
 		exteriorIor = &newTex;
 	if (interiorIor == &oldTex)
 		interiorIor = &newTex;
+	if (cauchyB == &oldTex)
+		cauchyB = &newTex;
 	if (nu == &oldTex) {
 		nu = &newTex;
 		updateGlossiness = true;
@@ -393,6 +410,8 @@ PropertiesUPtr RoughGlassMaterial::ToProperties(const ImageMapCache &imgMapCache
 		props->Set(Property("scene.materials." + name + ".interiorior")(interiorIor->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".uroughness")(nu->GetSDLValue()));
 	props->Set(Property("scene.materials." + name + ".vroughness")(nv->GetSDLValue()));
+	if (cauchyB)
+		props->Set(Property("scene.materials." + name + ".cauchyb")(cauchyB->GetSDLValue()));
 	if (filmThickness)
 		props->Set(Property("scene.materials." + name + ".filmthickness")(filmThickness->GetSDLValue()));
 	if (filmIor)

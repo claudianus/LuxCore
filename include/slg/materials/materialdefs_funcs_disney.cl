@@ -105,19 +105,22 @@ OPENCL_FORCE_INLINE void DisneyMaterial_Anisotropic_Params(const float anisotrop
 }
 
 OPENCL_FORCE_INLINE void DisneyMaterial_ComputeRatio(const float metallic, const float clearcoat,
-		float *ratioGlossy, float *ratioDiffuse, float *ratioClearcoat) {
+		const float transmission,
+		float *ratioGlossy, float *ratioDiffuse, float *ratioClearcoat, float *ratioTransmit) {
 	const float metallicBRDF = metallic;
 	const float dielectricBRDF = (1.0f - metallic);
 
 	const float specularWeight = metallicBRDF + dielectricBRDF;
-	const float diffuseWeight = dielectricBRDF;
+	const float transmitWeight = dielectricBRDF * transmission;
+	const float diffuseWeight = dielectricBRDF * (1.0f - transmission);
 	const float clearcoatWeight = clearcoat;
 
-	const float norm = 1.0f / (specularWeight + diffuseWeight + clearcoatWeight);
+	const float norm = 1.0f / (specularWeight + diffuseWeight + clearcoatWeight + transmitWeight);
 
 	*ratioGlossy = specularWeight * norm;
 	*ratioDiffuse = diffuseWeight * norm;
 	*ratioClearcoat = clearcoatWeight * norm;
+	*ratioTransmit = transmitWeight * norm;
 }
 
 //------------------------------------------------------------------------------
@@ -159,18 +162,55 @@ OPENCL_FORCE_INLINE float DisneyMaterial_ClearcoatPdf(const float clearcoatGloss
 	return Dr * NdotH / (4.0f * dot(wo, wh));
 }
 
+OPENCL_FORCE_INLINE float DisneyMaterial_TransmissionPdf(const float transmissionRoughness,
+		const float nc, const float nt, const float cauchyB,
+		const float3 localLightDir, const float3 localEyeDir,
+		__global const HitPoint *hitPoint) {
+	const float ntEff =
+#if defined(SLG_SPECTRAL)
+		Spectral_DispersiveIOR(nt, cauchyB, hitPoint);
+#else
+		nt;
+#endif
+	const float ntc = ntEff / nc;
+	const bool entering = (CosTheta(localLightDir) > 0.f);
+	const float eta = entering ? (nc / ntEff) : ntc;
+
+	float3 wh = eta * localLightDir + localEyeDir;
+	if (wh.z < 0.f)
+		wh = -wh;
+	const float lengthSquared = dot(wh, wh);
+	if (!(lengthSquared > 0.f))
+		return 0.f;
+	wh /= sqrt(lengthSquared);
+
+	const float alpha = fmax(transmissionRoughness * transmissionRoughness, 1e-6f);
+	const float cosThetaIH = fabs(dot(localEyeDir, wh));
+	const float cosThetaOH = dot(localLightDir, wh);
+	const float specPdf = SchlickDistribution_Pdf(alpha, wh, 0.f);
+
+	return specPdf * (fabs(cosThetaOH) * eta * eta) / lengthSquared;
+}
+
 OPENCL_FORCE_INLINE float DisneyMaterial_DisneyPdf(const float roughness, const float metallic,
 		const float clearcoat, const float clearcoatGloss, const float anisotropic,
-		const float3 localLightDir, const float3 localEyeDir) {
-	if (CosTheta(localLightDir) * CosTheta(localEyeDir) <= 0.0f)
-		return 0.0f;
-
+		const float transmission, const float transmissionRoughness,
+		const float nc, const float nt, const float cauchyB,
+		const float3 localLightDir, const float3 localEyeDir,
+		__global const HitPoint *hitPoint) {
 	const float3 wi = localLightDir;
 	const float3 wo = localEyeDir;
 
-	float ratioGlossy, ratioDiffuse, ratioClearcoat;
-	DisneyMaterial_ComputeRatio(metallic, clearcoat,
-			&ratioGlossy, &ratioDiffuse, &ratioClearcoat);
+	float ratioGlossy, ratioDiffuse, ratioClearcoat, ratioTransmit;
+	DisneyMaterial_ComputeRatio(metallic, clearcoat, transmission,
+			&ratioGlossy, &ratioDiffuse, &ratioClearcoat, &ratioTransmit);
+
+	if (CosTheta(localLightDir) * CosTheta(localEyeDir) <= 0.0f) {
+		// Opposite hemispheres: only the transmission lobe contributes
+		return (ratioTransmit > 0.f) ?
+			ratioTransmit * DisneyMaterial_TransmissionPdf(transmissionRoughness,
+				nc, nt, cauchyB, localLightDir, localEyeDir, hitPoint) : 0.f;
+	}
 
 	const float pdfDiffuse = ratioDiffuse * DisneyMaterial_DiffusePdf(wi, wo);
 	const float pdfMicrofacet = ratioGlossy * DisneyMaterial_MetallicPdf(anisotropic, roughness, wi, wo);
@@ -264,16 +304,84 @@ OPENCL_FORCE_INLINE float3 DisneyMaterial_EvaluateImpl(
 		const float3 colorVal, const float subsurfaceVal, const float roughnessVal,
 		const float metallicVal, const float specularVal, const float specularTintVal,
 		const float clearcoatVal, const float clearcoatGlossVal, const float anisotropicGlossVal,
-		const float sheenVal, const float sheenTintVal, 
-		const float localFilmAmount, const float localFilmThickness, const float localFilmIor) {
-	const float3 wo = eyeDir; 
+		const float sheenVal, const float sheenTintVal,
+		const float localFilmAmount, const float localFilmThickness, const float localFilmIor,
+		const float transmissionVal, const float transmissionRoughnessVal,
+		const float nc, const float nt, const float cauchyB) {
+	const float3 wo = eyeDir;
 	const float3 wi = lightDir;
 
 	const float NdotL = fabs(CosTheta(wi));
 	const float NdotV = fabs(CosTheta(wo));
-	
+
 	if (NdotL < DEFAULT_COS_EPSILON_STATIC || NdotV < DEFAULT_COS_EPSILON_STATIC)
 		return BLACK;
+
+	const float transmission = clamp(transmissionVal, 0.0f, 1.0f);
+	const float metallicT = clamp(metallicVal, 0.0f, 1.0f);
+
+	// Transmission lobe (integrated Principled-style refraction). Microfacet
+	// dielectric BTDF identical in shape to the RoughGlassMaterial one,
+	// tinted by the base color and weighted by transmission * (1 - metallic).
+	const float transmitWeight = transmission * (1.0f - metallicT);
+	if (CosTheta(wi) * CosTheta(wo) < 0.f) {
+		if (directPdfW)
+			*directPdfW = 0.f;
+
+		if (transmitWeight <= 0.f)
+			return BLACK;
+
+		const float ntEff =
+#if defined(SLG_SPECTRAL)
+			Spectral_DispersiveIOR(nt, cauchyB, hitPoint);
+#else
+			nt;
+#endif
+		const float ntc = ntEff / nc;
+		const bool entering = (CosTheta(wi) > 0.f);
+		const float eta = entering ? (nc / ntEff) : ntc;
+
+		float3 wh = eta * wi + wo;
+		if (wh.z < 0.f)
+			wh = -wh;
+		const float lengthSquared = dot(wh, wh);
+		if (!(lengthSquared > 0.f))
+			return BLACK;
+		wh /= sqrt(lengthSquared);
+
+		const float alpha = fmax(transmissionRoughnessVal * transmissionRoughnessVal, 1e-6f);
+		const float cosThetaI = fabs(CosTheta(wo));
+		const float cosThetaIH = fabs(dot(wo, wh));
+		const float cosThetaOH = dot(wi, wh);
+
+		const float D = SchlickDistribution_D(alpha, wh, 0.f);
+		const float G = SchlickDistribution_G(alpha, wi, wo);
+		const float specPdf = SchlickDistribution_Pdf(alpha, wh, 0.f);
+#if defined(SLG_SPECTRAL)
+		const float3 F = Spectral_DispersiveFresnelR(nt, nc, cauchyB, cosThetaOH, hitPoint);
+#else
+		const float3 F = MAKE_FLOAT3(FresnelCauchy_Evaluate(ntc, cosThetaOH),
+				FresnelCauchy_Evaluate(ntc, cosThetaOH), FresnelCauchy_Evaluate(ntc, cosThetaOH));
+#endif
+
+		if (directPdfW) {
+			float ratioGlossy, ratioDiffuse, ratioClearcoat, ratioTransmit;
+			DisneyMaterial_ComputeRatio(metallicT, clamp(clearcoatVal, 0.0f, 1.0f), transmission,
+					&ratioGlossy, &ratioDiffuse, &ratioClearcoat, &ratioTransmit);
+			*directPdfW = ratioTransmit * specPdf * (fabs(cosThetaOH) * eta * eta) / lengthSquared;
+
+			if (*directPdfW < 0.0001f)
+				return BLACK;
+		}
+
+		*event = GLOSSY | TRANSMIT;
+
+		const float3 colorT = Spectrum_Clamp(colorVal);
+		const float3 f = (fabs(cosThetaOH) * cosThetaIH * D * G /
+				(cosThetaI * lengthSquared)) * colorT * (WHITE - F) * transmitWeight;
+
+		return f * fabs(NdotL);
+	}
 
 	const float3 color = Spectrum_Clamp(colorVal);
 	const float subsurface = clamp(subsurfaceVal, 0.0f, 1.0f);
@@ -313,7 +421,8 @@ OPENCL_FORCE_INLINE float3 DisneyMaterial_EvaluateImpl(
 	const float3 sheenEval = DisneyMaterial_DisneySheen(color, sheen, sheenTint, LdotH);
 
 	if (directPdfW) {
-		*directPdfW = DisneyMaterial_DisneyPdf(roughness, metallic, clearcoat, clearcoatGloss, anisotropicGloss, lightDir, eyeDir);
+		*directPdfW = DisneyMaterial_DisneyPdf(roughness, metallic, clearcoat, clearcoatGloss, anisotropicGloss,
+				transmission, transmissionRoughnessVal, nc, nt, cauchyB, lightDir, eyeDir, hitPoint);
 
 		if (*directPdfW < 0.0001f)
 			return BLACK;
@@ -321,8 +430,9 @@ OPENCL_FORCE_INLINE float3 DisneyMaterial_EvaluateImpl(
 
 	*event = GLOSSY | REFLECT;
 
-	const float3 f = (Lerp3(subsurface, diffuseEval, subsurfaceEval) + sheenEval) * (1.0f - metallic) + glossyEval;
-	
+	const float3 f = (Lerp3(subsurface, diffuseEval, subsurfaceEval) + sheenEval) *
+			(1.0f - metallic) * (1.0f - transmission) + glossyEval;
+
 	return f * fabs(NdotL);
 }
 
@@ -338,8 +448,16 @@ OPENCL_FORCE_INLINE void DisneyMaterial_Evaluate(__global const Material* restri
 								  ? clamp(Texture_GetFloatValue(material->disney.filmAmountTexIndex, hitPoint TEXTURES_PARAM), 0.f, 1.f) : 1.f;
 	const float localFilmThickness = (material->disney.filmThicknessTexIndex != NULL_INDEX) 
 									 ? Texture_GetFloatValue(material->disney.filmThicknessTexIndex, hitPoint TEXTURES_PARAM) : 0.f;
-	const float localFilmIor = (localFilmThickness > 0.f && material->disney.filmIorTexIndex != NULL_INDEX) 
+	const float localFilmIor = (localFilmThickness > 0.f && material->disney.filmIorTexIndex != NULL_INDEX)
 							   ? Texture_GetFloatValue(material->disney.filmIorTexIndex, hitPoint TEXTURES_PARAM) : 1.f;
+	const float roughnessForT = Texture_GetFloatValue(material->disney.roughnessTexIndex, hitPoint TEXTURES_PARAM);
+	const float transmissionVal = Texture_GetFloatValue(material->disney.transmissionTexIndex, hitPoint TEXTURES_PARAM);
+	const float transmissionRoughnessVal = (material->disney.transmissionRoughnessTexIndex != NULL_INDEX)
+									 ? Texture_GetFloatValue(material->disney.transmissionRoughnessTexIndex, hitPoint TEXTURES_PARAM) : roughnessForT;
+	const float nc = ExtractExteriorIors(hitPoint, NULL_INDEX TEXTURES_PARAM);
+	const float nt = ExtractInteriorIors(hitPoint, material->disney.iorTexIndex TEXTURES_PARAM);
+	const float cauchyB = (material->disney.cauchyBTexIndex != NULL_INDEX)
+						? Texture_GetFloatValue(material->disney.cauchyBTexIndex, hitPoint TEXTURES_PARAM) : 0.f;
 
 	BSDFEvent event;
 	float directPdfW;
@@ -347,7 +465,7 @@ OPENCL_FORCE_INLINE void DisneyMaterial_Evaluate(__global const Material* restri
 		&event, &directPdfW,
 		Texture_GetSpectrumValue(material->disney.baseColorTexIndex, hitPoint TEXTURES_PARAM),
 		Texture_GetFloatValue(material->disney.subsurfaceTexIndex, hitPoint TEXTURES_PARAM),
-		Texture_GetFloatValue(material->disney.roughnessTexIndex, hitPoint TEXTURES_PARAM),
+		roughnessForT,
 		Texture_GetFloatValue(material->disney.metallicTexIndex, hitPoint TEXTURES_PARAM),
 		Texture_GetFloatValue(material->disney.specularTexIndex, hitPoint TEXTURES_PARAM),
 		Texture_GetFloatValue(material->disney.specularTintTexIndex, hitPoint TEXTURES_PARAM),
@@ -356,7 +474,8 @@ OPENCL_FORCE_INLINE void DisneyMaterial_Evaluate(__global const Material* restri
 		Texture_GetFloatValue(material->disney.anisotropicTexIndex, hitPoint TEXTURES_PARAM),
 		Texture_GetFloatValue(material->disney.sheenTexIndex, hitPoint TEXTURES_PARAM),
 		Texture_GetFloatValue(material->disney.sheenTintTexIndex, hitPoint TEXTURES_PARAM),
-		localFilmAmount, localFilmThickness, localFilmIor)
+		localFilmAmount, localFilmThickness, localFilmIor,
+		transmissionVal, transmissionRoughnessVal, nc, nt, cauchyB)
 		// Evaluate() follows LuxRender habit to return the result multiplied by cosThetaToLight
 		* fabs(CosTheta(lightDir));
 
@@ -445,13 +564,21 @@ OPENCL_FORCE_INLINE void DisneyMaterial_Sample(__global const Material* restrict
 	const float clearcoat = clamp(clearcoatVal, 0.0f, 1.0f);
 	const float clearcoatGloss = clamp(clearcoatGlossVal, 0.0f, 1.0f);
 	const float anisotropicGloss = clamp(anisotropicGlossVal, 0.0f, 1.0f);
+	const float transmission = clamp(Texture_GetFloatValue(material->disney.transmissionTexIndex, hitPoint TEXTURES_PARAM), 0.0f, 1.0f);
+	const float transmissionRoughness = (material->disney.transmissionRoughnessTexIndex != NULL_INDEX)
+		? clamp(Texture_GetFloatValue(material->disney.transmissionRoughnessTexIndex, hitPoint TEXTURES_PARAM), 0.0f, 1.0f) : roughness;
+	const float nc = ExtractExteriorIors(hitPoint, NULL_INDEX TEXTURES_PARAM);
+	const float nt = ExtractInteriorIors(hitPoint, material->disney.iorTexIndex TEXTURES_PARAM);
+	const float cauchyB = (material->disney.cauchyBTexIndex != NULL_INDEX)
+		? Texture_GetFloatValue(material->disney.cauchyBTexIndex, hitPoint TEXTURES_PARAM) : 0.f;
 
 	const float3 wo = fixedDir;
 
-	float ratioGlossy, ratioDiffuse, ratioClearcoat;
-	DisneyMaterial_ComputeRatio(metallic, clearcoat,
-			&ratioGlossy, &ratioDiffuse, &ratioClearcoat);
+	float ratioGlossy, ratioDiffuse, ratioClearcoat, ratioTransmit;
+	DisneyMaterial_ComputeRatio(metallic, clearcoat, transmission,
+			&ratioGlossy, &ratioDiffuse, &ratioClearcoat, &ratioTransmit);
 
+	bool sampledTransmit = false;
 	float3 sampledDir;
 	if (passThroughEvent <= ratioGlossy)
 		sampledDir = DisneyMaterial_DisneyMetallicSample(anisotropicGloss, roughness, wo, u0, u1);
@@ -459,10 +586,42 @@ OPENCL_FORCE_INLINE void DisneyMaterial_Sample(__global const Material* restrict
 		sampledDir = DisneyMaterial_DisneyClearcoatSample(clearcoatGloss, wo, u0, u1);
 	else if (passThroughEvent > ratioGlossy + ratioClearcoat && passThroughEvent <= ratioGlossy + ratioClearcoat + ratioDiffuse)
 		sampledDir = DisneyMaterial_DisneyDiffuseSample(wo, u0, u1);
-	else {
+	else if (passThroughEvent > ratioGlossy + ratioClearcoat + ratioDiffuse &&
+			passThroughEvent <= ratioGlossy + ratioClearcoat + ratioDiffuse + ratioTransmit) {
+		// Transmission lobe: sample the transmission-roughness microfacet
+		// normal and refract (same scheme as RoughGlassMaterial)
+		const float ntEff =
+#if defined(SLG_SPECTRAL)
+			Spectral_DispersiveIOR(nt, cauchyB, hitPoint);
+#else
+			nt;
+#endif
+		const float ntc = ntEff / nc;
+		const float alpha = fmax(transmissionRoughness * transmissionRoughness, 1e-6f);
+
+		float3 wh;
+		float d, specPdf;
+		SchlickDistribution_SampleH(alpha, 0.f, u0, u1, &wh, &d, &specPdf);
+		if (wh.z < 0.f)
+			wh = -wh;
+		const float cosThetaOH = dot(wo, wh);
+		const bool entering = (CosTheta(wo) > 0.f);
+		const float eta = entering ? (nc / ntEff) : ntc;
+		const float sinThetaIH2 = eta * eta * fmax(0.f, 1.f - cosThetaOH * cosThetaOH);
+		if (sinThetaIH2 >= 1.f) {
+			// Total internal reflection
+			MATERIAL_SAMPLE_RETURN_BLACK;
+		}
+		float cosThetaIH = sqrt(1.f - sinThetaIH2);
+		if (entering)
+			cosThetaIH = -cosThetaIH;
+		const float length = eta * cosThetaOH + cosThetaIH;
+		sampledDir = length * wh - eta * wo;
+		sampledTransmit = true;
+	} else {
 		MATERIAL_SAMPLE_RETURN_BLACK;
 	}
-	
+
 	const float3 localLightDir = sampledDir;
 	const float3 localEyeDir = fixedDir;
 
@@ -473,23 +632,31 @@ OPENCL_FORCE_INLINE void DisneyMaterial_Sample(__global const Material* restrict
 	}
 
 	const float pdfW = DisneyMaterial_DisneyPdf(roughnessVal, metallicVal, clearcoatVal, clearcoatGlossVal, anisotropicGlossVal,
-			localLightDir, localEyeDir);
+			transmission, transmissionRoughness, nc, nt, cauchyB,
+			localLightDir, localEyeDir, hitPoint);
 	if (pdfW < 0.0001f) {
 		MATERIAL_SAMPLE_RETURN_BLACK;
 	}
-	
-	const float localFilmAmount = (material->disney.filmAmountTexIndex != NULL_INDEX) 
+
+	const float localFilmAmount = (material->disney.filmAmountTexIndex != NULL_INDEX)
 								  ? clamp(Texture_GetFloatValue(material->disney.filmAmountTexIndex, hitPoint TEXTURES_PARAM), 0.f, 1.f) : 1.f;
-	const float localFilmThickness = (material->disney.filmThicknessTexIndex != NULL_INDEX) 
+	const float localFilmThickness = (material->disney.filmThicknessTexIndex != NULL_INDEX)
 									 ? Texture_GetFloatValue(material->disney.filmThicknessTexIndex, hitPoint TEXTURES_PARAM) : 0.f;
-	const float localFilmIor = (localFilmThickness > 0.f && material->disney.filmIorTexIndex != NULL_INDEX) 
+	const float localFilmIor = (localFilmThickness > 0.f && material->disney.filmIorTexIndex != NULL_INDEX)
 							   ? Texture_GetFloatValue(material->disney.filmIorTexIndex, hitPoint TEXTURES_PARAM) : 1.f;
 
 	BSDFEvent event;
-	const float3 f = DisneyMaterial_EvaluateImpl(hitPoint, localLightDir, localEyeDir, &event, NULL,
+	float3 f = DisneyMaterial_EvaluateImpl(hitPoint, localLightDir, localEyeDir, &event, NULL,
 			colorVal, subsurfaceVal, roughnessVal, metallicVal, specularVal, specularTintVal,
 			clearcoatVal, clearcoatGlossVal, anisotropicGlossVal, sheenVal, sheenTintVal,
-			localFilmAmount, localFilmThickness, localFilmIor);
+			localFilmAmount, localFilmThickness, localFilmIor,
+			transmission, transmissionRoughness, nc, nt, cauchyB);
+
+#if defined(SLG_SPECTRAL)
+	// Dispersive refraction terminates the secondary wavelengths
+	if (sampledTransmit && cauchyB > 0.f)
+		f *= Spectral_CollapseToHero(&((__global HitPoint *)hitPoint)->spectralHeroAlive);
+#endif
 
 	const float3 result = f / pdfW;
 
