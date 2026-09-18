@@ -121,7 +121,7 @@ Spectrum InfiniteLight::GetRadiance(SceneConstRef scene,
 		*emissionPdfW = distPdf * latLongMappingPdf / (M_PI * envRadius * envRadius);
 	}
 
-	return temperatureScale * gain * imageMap->GetSpectrum(UV(u, v));
+	return Spectral::Emission(temperatureScale * gain * imageMap->GetSpectrum(UV(u, v)));
 }
 
 Spectrum InfiniteLight::Emit(SceneConstRef scene,

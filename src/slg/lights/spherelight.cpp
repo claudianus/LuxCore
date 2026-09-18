@@ -97,7 +97,7 @@ Spectrum SphereLight::Emit(SceneConstRef scene,
 
 	ray.Update(rayOrig, rayDir, time);
 
-	return emittedFactor * invArea * CosTheta(localDirOut) * INV_PI;
+	return Spectral::Emission(emittedFactor) * invArea * CosTheta(localDirOut) * INV_PI;
 }
 
 Spectrum SphereLight::Illuminate(SceneConstRef scene, const BSDF &bsdf,
@@ -151,7 +151,7 @@ Spectrum SphereLight::Illuminate(SceneConstRef scene, const BSDF &bsdf,
 
 		shadowRay = Ray(shadowRayOrig, shadowRayDir, 0.f, shadowRayDistance, time);
 
-		return emittedFactor * (1.f / (4.f * M_PI));
+		return Spectral::Emission(emittedFactor) * (1.f / (4.f * M_PI));
 	}
 	else {
 		if (cosThetaAtLight)
@@ -164,7 +164,7 @@ Spectrum SphereLight::Illuminate(SceneConstRef scene, const BSDF &bsdf,
 
 		shadowRay = Ray(shadowRayOrig, shadowRayDir, 0.f, shadowRayDistance, time);
 
-		return emittedFactor * invArea * INV_PI;
+		return Spectral::Emission(emittedFactor) * invArea * INV_PI;
 	}
 }
 

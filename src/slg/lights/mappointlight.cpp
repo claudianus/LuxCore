@@ -76,7 +76,7 @@ Spectrum MapPointLight::Emit(SceneConstRef scene,
 
 	ray.Update(rayOrig, rayDir, time);
 
-	return emittedFactor * ((SphericalFunction *)func)->Evaluate(localFromLight) /
+	return Spectral::Emission(emittedFactor) * ((SphericalFunction *)func)->Evaluate(localFromLight) /
 			(4.f * M_PI * func->Average());
 }
 
@@ -105,7 +105,7 @@ Spectrum MapPointLight::Illuminate(SceneConstRef scene, const BSDF &bsdf,
 
 	shadowRay = Ray(shadowRayOrig, shadowRayDir, 0.f, shadowRayDistance, time);
 
-	return emittedFactor * ((SphericalFunction *)func)->Evaluate(localFromLight) /
+	return Spectral::Emission(emittedFactor) * ((SphericalFunction *)func)->Evaluate(localFromLight) /
 			(4.f * M_PI * func->Average());
 }
 

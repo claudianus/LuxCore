@@ -172,9 +172,9 @@ Spectrum SkyLight2::ComputeSkyRadiance(const Vector &w) const {
 Spectrum SkyLight2::ComputeRadiance(const Vector &w) const {
 	if (hasGround && (Dot(w, absoluteUpDir) < 0.f)) {
 		// Lower hemisphere
-		return scaledGroundColor;
+		return Spectral::Emission(scaledGroundColor);
 	} else
-		return temperatureScale * gain * ComputeSkyRadiance(w);
+		return Spectral::Emission(temperatureScale * gain * ComputeSkyRadiance(w));
 }
 
 void SkyLight2::Preprocess() {

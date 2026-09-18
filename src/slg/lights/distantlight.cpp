@@ -108,7 +108,7 @@ Spectrum DistantLight::Emit(SceneConstRef scene,
 
 	ray.Update(rayOrig, rayDir, time);
 
-	return temperatureScale * gain * color;
+	return Spectral::Emission(temperatureScale * gain * color);
 }
 
 Spectrum DistantLight::Illuminate(SceneConstRef scene, const BSDF &bsdf,
@@ -138,7 +138,7 @@ Spectrum DistantLight::Illuminate(SceneConstRef scene, const BSDF &bsdf,
 
 	shadowRay = Ray(shadowRayOrig, shadowRayDir, 0.f, shadowRayDistance, time);
 
-	return temperatureScale * gain * color;
+	return Spectral::Emission(temperatureScale * gain * color);
 }
 
 PropertiesUPtr DistantLight::ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const {

@@ -172,7 +172,7 @@ Spectrum SunLight::Emit(SceneConstRef scene,
 
 	ray.Update(rayOrig, rayDir, time);
 
-	return color;
+	return Spectral::Emission(color);
 }
 
 Spectrum SunLight::Illuminate(SceneConstRef scene, const BSDF &bsdf,
@@ -207,7 +207,7 @@ Spectrum SunLight::Illuminate(SceneConstRef scene, const BSDF &bsdf,
 
 	shadowRay = Ray(shadowRayOrig, shadowRayDir, 0.f, shadowRayDistance, time);
 
-	return color;
+	return Spectral::Emission(color);
 }
 
 Spectrum SunLight::GetRadiance(SceneConstRef scene,
@@ -228,7 +228,7 @@ Spectrum SunLight::GetRadiance(SceneConstRef scene,
 		*emissionPdfW = uniformConePdf / (M_PI * envRadius * envRadius);
 	}
 
-	return color;
+	return Spectral::Emission(color);
 }
 
 PropertiesUPtr SunLight::ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const {

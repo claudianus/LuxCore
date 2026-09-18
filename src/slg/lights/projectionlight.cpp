@@ -149,7 +149,7 @@ Spectrum ProjectionLight::Emit(SceneConstRef scene,
 	if (cosThetaAtLight)
 		*cosThetaAtLight = 1.f;
 
-	Spectrum c = emittedFactor;
+	Spectrum c = Spectral::Emission(emittedFactor);
 	if (imageMap)
 		c *= imageMap->GetSpectrum(UV(u0, u1));
 
@@ -186,7 +186,7 @@ Spectrum ProjectionLight::Illuminate(SceneConstRef scene, const BSDF &bsdf,
 	if (emissionPdfW)
 		*emissionPdfW = 0.f;
 
-	Spectrum c = emittedFactor;
+	Spectrum c = Spectral::Emission(emittedFactor);
 	if (imageMap) {
 		const float u = (p0.x - screenX0) / (screenX1 - screenX0);
 		const float v = (p0.y - screenY0) / (screenY1 - screenY0);

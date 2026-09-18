@@ -151,7 +151,7 @@ Spectrum TriangleLight::Emit(SceneConstRef scene,
 
 	ray.Update(rayOrig, rayDir, time);
 
-	return lightMaterial->GetEmittedRadiance(tmpHitPoint, invMeshArea) * emissionColor * fabsf(localDirOut.z);
+	return lightMaterial->GetEmittedRadiance(tmpHitPoint, invMeshArea) * Spectral::Emission(emissionColor) * fabsf(localDirOut.z);
 }
 
 Spectrum TriangleLight::Illuminate(SceneConstRef scene, const BSDF &bsdf,
@@ -251,7 +251,7 @@ Spectrum TriangleLight::Illuminate(SceneConstRef scene, const BSDF &bsdf,
 	
 	shadowRay = Ray(shadowRayOrig, shadowRayDir, 0.f, shadowRayDistance, time);
 
-	return lightMaterial->GetEmittedRadiance(tmpHitPoint, invMeshArea) * emissionColor;
+	return lightMaterial->GetEmittedRadiance(tmpHitPoint, invMeshArea) * Spectral::Emission(emissionColor);
 }
 
 bool TriangleLight::IsAlwaysInShadow(SceneConstRef scene,
@@ -321,6 +321,6 @@ Spectrum TriangleLight::GetRadiance(const HitPoint &hitPoint,
 		}
 	}
 
-	return lightMaterial->GetEmittedRadiance(hitPoint, invMeshArea) * emissionColor;
+	return lightMaterial->GetEmittedRadiance(hitPoint, invMeshArea) * Spectral::Emission(emissionColor);
 }
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

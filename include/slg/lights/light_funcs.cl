@@ -501,6 +501,14 @@ OPENCL_FORCE_INLINE float3 TriangleLight_Illuminate(__global const LightSource *
 		b1, b2,
 		passThroughEvent
 		MATERIALS_PARAM);
+#if defined(SLG_SPECTRAL)
+	// The emitted texture evals on the light hit point use the shading
+	// path's wavelengths (they belong to the same path).
+	tmpHitPoint->spectralW[0] = bsdf->hitPoint.spectralW[0];
+	tmpHitPoint->spectralW[1] = bsdf->hitPoint.spectralW[1];
+	tmpHitPoint->spectralW[2] = bsdf->hitPoint.spectralW[2];
+	tmpHitPoint->spectralHeroAlive = bsdf->hitPoint.spectralHeroAlive;
+#endif
 	// Add bump?
 		// lightMaterial->Bump(&hitPoint, 1.f);
 
@@ -1011,95 +1019,119 @@ OPENCL_FORCE_INLINE float3 Light_Illuminate(
 		__global HitPoint *tmpHitPoint,
 		__global Ray *shadowRay, float *directPdfW
 		LIGHTS_PARAM_DECL) {
+	float3 radiance;
 	switch (light->type) {
 		case TYPE_IL_CONSTANT:
-			return ConstantInfiniteLight_Illuminate(
+			radiance = ConstantInfiniteLight_Illuminate(
 					light,
 					worldCenterX, worldCenterY, worldCenterZ, envRadius,
 					bsdf, time, u0, u1,
 					shadowRay, directPdfW
 					LIGHTS_PARAM);
+			break;
 		case TYPE_IL:
-			return InfiniteLight_Illuminate(
+			radiance = InfiniteLight_Illuminate(
 					light,
 					worldCenterX, worldCenterY, worldCenterZ, envRadius,
 					bsdf, time, u0, u1,
 					shadowRay, directPdfW
 					LIGHTS_PARAM);
+			break;
 		case TYPE_IL_SKY2:
-			return Sky2Light_Illuminate(
+			radiance = Sky2Light_Illuminate(
 					light,
 					worldCenterX, worldCenterY, worldCenterZ, envRadius,
 					bsdf, time, u0, u1,
 					shadowRay, directPdfW
 					LIGHTS_PARAM);
+			break;
 		case TYPE_SUN:
-			return SunLight_Illuminate(
+			radiance = SunLight_Illuminate(
 					light,
 					worldCenterX, worldCenterY, worldCenterZ, envRadius,
 					bsdf, time, u0, u1,
 					shadowRay, directPdfW);
+			break;
 		case TYPE_TRIANGLE:
-			return TriangleLight_Illuminate(
+			radiance = TriangleLight_Illuminate(
 					light,
 					tmpHitPoint,
 					bsdf, time ,u0, u1,
 					passThroughEvent,
 					shadowRay, directPdfW
 					MATERIALS_PARAM);
+			break;
 		case TYPE_POINT:
-			return PointLight_Illuminate(
+			radiance = PointLight_Illuminate(
 					light,
 					bsdf, time,
 					shadowRay, directPdfW);
+			break;
 		case TYPE_MAPPOINT:
-			return MapPointLight_Illuminate(
+			radiance = MapPointLight_Illuminate(
 					light,
 					bsdf, time,
 					shadowRay, directPdfW
 					IMAGEMAPS_PARAM);
+			break;
 		case TYPE_SPOT:
-			return SpotLight_Illuminate(
+			radiance = SpotLight_Illuminate(
 					light,
 					bsdf, time,
 					shadowRay, directPdfW);
+			break;
 		case TYPE_PROJECTION:
-			return ProjectionLight_Illuminate(
+			radiance = ProjectionLight_Illuminate(
 					light,
 					bsdf, time,
 					shadowRay, directPdfW
 					IMAGEMAPS_PARAM);
+			break;
 		case TYPE_SHARPDISTANT:
-			return SharpDistantLight_Illuminate(
+			radiance = SharpDistantLight_Illuminate(
 					light,
 					worldCenterX, worldCenterY, worldCenterZ, envRadius,
 					bsdf, time,
 					shadowRay, directPdfW);
+			break;
 		case TYPE_DISTANT:
-			return DistantLight_Illuminate(
+			radiance = DistantLight_Illuminate(
 					light,
 					worldCenterX, worldCenterY, worldCenterZ, envRadius,
 					bsdf, time, u0, u1,
 					shadowRay, directPdfW);
+			break;
 		case TYPE_LASER:
-			return LaserLight_Illuminate(
+			radiance = LaserLight_Illuminate(
 					light,
 					bsdf, time,
 					shadowRay, directPdfW);
+			break;
 		case TYPE_SPHERE:
-			return SphereLight_Illuminate(
+			radiance = SphereLight_Illuminate(
 					light,
 					bsdf, time, u0, u1,
 					shadowRay, directPdfW);
+			break;
 		case TYPE_MAPSPHERE:
-			return MapSphereLight_Illuminate(
+			radiance = MapSphereLight_Illuminate(
 					light,
 					bsdf, time, u0, u1,
 					shadowRay, directPdfW
 					IMAGEMAPS_PARAM);
+			break;
 		default:
-			return BLACK;
+			radiance = BLACK;
 	}
+#if defined(SLG_SPECTRAL)
+	// Non-triangle lights return baked RGB radiance: upsample to the path
+	// bins with the illuminant basis. Triangle lights already carry
+	// spectral bins via Material_GetEmittedRadiance.
+	if (light->type != TYPE_TRIANGLE)
+		radiance = Spectral_Upsample(radiance, bsdf->hitPoint.spectralW,
+				bsdf->hitPoint.spectralHeroAlive, true);
+#endif
+	return radiance;
 }
 
 OPENCL_FORCE_INLINE bool Light_IsEnvOrIntersectable(__global const LightSource *light) {

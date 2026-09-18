@@ -120,7 +120,7 @@ Spectrum SpotLight::Emit(SceneConstRef scene,
 
 	ray.Update(rayOrig, rayDir, time);
 
-	return emittedFactor * (LocalFalloff(localFromLight, cosTotalWidth, cosFalloffStart) / fabsf(CosTheta(localFromLight)));
+	return Spectral::Emission(emittedFactor) * (LocalFalloff(localFromLight, cosTotalWidth, cosFalloffStart) / fabsf(CosTheta(localFromLight)));
 }
 
 Spectrum SpotLight::Illuminate(SceneConstRef scene, const BSDF &bsdf,
@@ -148,7 +148,7 @@ Spectrum SpotLight::Illuminate(SceneConstRef scene, const BSDF &bsdf,
 
 	shadowRay = Ray(shadowRayOrig, shadowRayDir, 0.f, shadowRayDistance, time);
 
-	return emittedFactor * (falloff / fabsf(CosTheta(localFromLight)));
+	return Spectral::Emission(emittedFactor) * (falloff / fabsf(CosTheta(localFromLight)));
 }
 
 bool SpotLight::IsAlwaysInShadow(SceneConstRef scene,

@@ -75,7 +75,7 @@ Spectrum ConstantInfiniteLight::GetRadiance(SceneConstRef scene,
 			*emissionPdfW = UniformSpherePdf() / (M_PI * envRadius * envRadius);
 	}
 
-	return temperatureScale * gain * color;
+	return Spectral::Emission(temperatureScale * gain * color);
 }
 
 Spectrum ConstantInfiniteLight::Emit(SceneConstRef scene,
@@ -160,7 +160,7 @@ Spectrum ConstantInfiniteLight::Illuminate(SceneConstRef scene, const BSDF &bsdf
 
 	shadowRay = Ray(shadowRayOrig, shadowRayDir, 0.f, shadowRayDistance, time);
 	
-	return temperatureScale * gain * color;
+	return Spectral::Emission(temperatureScale * gain * color);
 }
 
 UV ConstantInfiniteLight::GetEnvUV(const luxrays::Vector &dir) const {

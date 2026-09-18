@@ -92,7 +92,7 @@ Spectrum PointLight::Emit(SceneConstRef scene,
 
 	ray.Update(rayOrig, rayDir, time);
 
-	return emittedFactor * (1.f / (4.f * M_PI));
+	return Spectral::Emission(emittedFactor) * (1.f / (4.f * M_PI));
 }
 
 Spectrum PointLight::Illuminate(SceneConstRef scene, const BSDF &bsdf,
@@ -116,7 +116,7 @@ Spectrum PointLight::Illuminate(SceneConstRef scene, const BSDF &bsdf,
 
 	shadowRay = Ray(shadowRayOrig, shadowRayDir, 0.f, shadowRayDistance, time);
 
-	return emittedFactor * (1.f / (4.f * M_PI));
+	return Spectral::Emission(emittedFactor) * (1.f / (4.f * M_PI));
 }
 
 PropertiesUPtr PointLight::ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const {

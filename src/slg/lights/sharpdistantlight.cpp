@@ -91,7 +91,7 @@ Spectrum SharpDistantLight::Emit(SceneConstRef scene,
 
 	ray.Update(rayOrig, absoluteLightDir, time);
 
-	return temperatureScale * gain * color;
+	return Spectral::Emission(temperatureScale * gain * color);
 }
 
 Spectrum SharpDistantLight::Illuminate(SceneConstRef scene, const BSDF &bsdf,
@@ -120,7 +120,7 @@ Spectrum SharpDistantLight::Illuminate(SceneConstRef scene, const BSDF &bsdf,
 
 	shadowRay = Ray(shadowRayOrig, shadowRayDir, 0.f, shadowRayDistance, time);
 
-	return temperatureScale * gain * color;
+	return Spectral::Emission(temperatureScale * gain * color);
 }
 
 PropertiesUPtr SharpDistantLight::ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const {
