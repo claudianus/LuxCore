@@ -45,6 +45,7 @@
 #include "slg/film/filters/blackmanharris.h"
 
 #include "slg/engines/rtpathocl/rtpathocl.h"
+#include "slg/engines/rtpathcpu/rtpathcpu.h"
 #include "slg/engines/lightcpu/lightcpu.h"
 #include "slg/engines/pathcpu/pathcpu.h"
 #include "slg/engines/bidircpu/bidircpu.h"
@@ -400,6 +401,34 @@ RenderEngineUPtr RenderConfig::AllocRenderEngine() {
 			(type == "TILEPATHOCL"))
 		throw runtime_error(type + " render engine is not supported by OpenCL-less version of the binaries. Download the OpenCL-enabled version or change the render engine used.");
 #endif
+
+	// Backend consistency guard: ReSTIR DI reservoir resampling is
+	// implemented inside the CPU path tracers' direct light sampling
+	// (pathtracer.cpp) and inside the GPU path tracers' kernels
+	// (DirectLight_Illuminate() in pathoclbase_funcs.cl, enabled by
+	// CompilePathTracer()). Any other engine silently degrades to the
+	// parent power-based distribution (e.g. BIDIRCPU never calls
+	// SampleLightsBSDF), so fail loudly instead of rendering with a
+	// different algorithm than requested.
+	if (LightStrategy::GetType(GetConfig()) == TYPE_RESTIR_DI) {
+		const string engineType = GetConfig().Get(
+			Property("renderengine.type")(PathCPURenderEngine::GetObjectTag())
+		).Get<string>();
+
+		if (engineType != PathCPURenderEngine::GetObjectTag() &&
+				engineType != TilePathCPURenderEngine::GetObjectTag() &&
+				engineType != RTPathCPURenderEngine::GetObjectTag() &&
+				engineType != "PATHOCL" &&
+				engineType != "TILEPATHOCL" &&
+				engineType != "RTPATHOCL")
+			throw runtime_error(
+				"lightstrategy.type = RESTIR_DI is only supported by the "
+				"PATHCPU, TILEPATHCPU, RTPATHCPU, PATHOCL, TILEPATHOCL and "
+				"RTPATHOCL render engines (engine used: "
+				+ engineType + "). Either switch to a path tracer engine or "
+				"use another light strategy."
+			);
+	}
 
 	return RenderEngine::FromProperties(*this);
 }

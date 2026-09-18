@@ -162,6 +162,12 @@ PropertiesUPtr luxcore::GetPlatformDesc() {
 	props << Property("compile.LUXRAYS_ENABLE_OPTIX")(false);
 #endif
 
+#if defined(__APPLE__) && !defined(LUXRAYS_DISABLE_METAL)
+	props << Property("compile.LUXRAYS_ENABLE_METAL")(true);
+#else
+	props << Property("compile.LUXRAYS_ENABLE_METAL")(false);
+#endif
+
 #if !defined(LUXCORE_DISABLE_OIDN)
 	props << Property("compile.LUXCORE_ENABLE_OIDN")(true);
 	props << Property("compile.LUXCORE_DISABLE_OIDN")(false);
@@ -192,8 +198,10 @@ PropertiesUPtr luxcore::GetOpenCLDeviceDescs() {
 	Context ctx;
 	auto deviceDescriptions = ctx.GetAvailableDeviceDescriptions();
 
-	// Select only OpenCL devices
-	DeviceDescription::Filter((DeviceType)(DEVICE_TYPE_OPENCL_ALL | DEVICE_TYPE_CUDA_ALL), deviceDescriptions);
+	// Select hardware devices (OpenCL, CUDA and Metal - the renderer's
+	// device selection string addresses all of them by position)
+	DeviceDescription::Filter((DeviceType)(DEVICE_TYPE_OPENCL_ALL | DEVICE_TYPE_CUDA_ALL |
+			DEVICE_TYPE_METAL_ALL), deviceDescriptions);
 
 	// Add all device information to the list
 	for (int i=0; DeviceDescriptionRef desc : deviceDescriptions) {
@@ -213,6 +221,9 @@ PropertiesUPtr luxcore::GetOpenCLDeviceDescs() {
 			deviceConstMem = oclDesc.GetConstMem();
 		} else if (desc.GetType() & DEVICE_TYPE_CUDA_ALL) {
 			platformName = "NVIDIA";
+		} else if (desc.GetType() & DEVICE_TYPE_METAL_ALL) {
+			platformName = "Apple";
+			platformVersion = "Metal";
 		}
 
 		const string prefix = "opencl.device." + ToString(i++);

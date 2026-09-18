@@ -77,12 +77,18 @@ static void PythonDebugHandler(const char *msg) {
     luxCoreLogHandler(std::string(msg));
   else {
     // The following code is supposed to work ... but it doesn't (it never
-    // returns). So I'm just avoiding to call Python without the GIL and
-    // I silently discard the message.
+    // returns when the thread that holds the GIL waits for this one). So
+    // I'm just avoiding to call Python without the GIL. However, discarding
+    // the message entirely hides every render thread line (kernel
+    // compilation, errors, etc.) as well as anything logged while the GIL
+    // is released during the long Start()/Stop() calls: keep those visible
+    // on the process stderr instead.
 
     //PyGILState_STATE state = PyGILState_Ensure();
     //luxCoreLogHandler(std::string(msg));
     //PyGILState_Release(state);
+
+    std::cerr << msg << std::endl;
   }
 }
 #else
@@ -2646,24 +2652,39 @@ PYBIND11_MODULE(pyluxcore, m) {
 	//TODO
     //.def("GetRenderConfig", &RenderSession_GetRenderConfig)
     .def("GetRenderConfig", &luxcore::detail::RenderSessionImpl::GetRenderConfig)
-    .def("Start", &luxcore::detail::RenderSessionImpl::Start)
-    .def("Stop", &luxcore::detail::RenderSessionImpl::Stop)
+    // Long running calls release the GIL: kernel compilation (i.e. the
+    // Metal path is a multi-second cl2msl + Metal compiler run) happens
+    // inside Start(), and WaitNewFrame()/WaitForDone()/Stop() block on
+    // render threads. Holding the GIL there freezes every other Python
+    // thread - including Blender's UI callbacks - for the whole duration.
+    .def("Start", &luxcore::detail::RenderSessionImpl::Start,
+         py::call_guard<py::gil_scoped_release>())
+    .def("Stop", &luxcore::detail::RenderSessionImpl::Stop,
+         py::call_guard<py::gil_scoped_release>())
     .def("IsStarted", &luxcore::detail::RenderSessionImpl::IsStarted)
-    .def("BeginSceneEdit", &luxcore::detail::RenderSessionImpl::BeginSceneEdit)
-    .def("EndSceneEdit", &luxcore::detail::RenderSessionImpl::EndSceneEdit)
+    .def("BeginSceneEdit", &luxcore::detail::RenderSessionImpl::BeginSceneEdit,
+         py::call_guard<py::gil_scoped_release>())
+    .def("EndSceneEdit", &luxcore::detail::RenderSessionImpl::EndSceneEdit,
+         py::call_guard<py::gil_scoped_release>())
     .def("IsInSceneEdit", &luxcore::detail::RenderSessionImpl::IsInSceneEdit)
-    .def("Pause", &luxcore::detail::RenderSessionImpl::Pause)
-    .def("Resume", &luxcore::detail::RenderSessionImpl::Resume)
+    .def("Pause", &luxcore::detail::RenderSessionImpl::Pause,
+         py::call_guard<py::gil_scoped_release>())
+    .def("Resume", &luxcore::detail::RenderSessionImpl::Resume,
+         py::call_guard<py::gil_scoped_release>())
     .def("IsInPause", &luxcore::detail::RenderSessionImpl::IsInPause)
     .def("GetFilm", &luxcore::detail::RenderSessionImpl::GetFilmPtr)
-    .def("UpdateStats", &luxcore::detail::RenderSessionImpl::UpdateStats)
+    .def("UpdateStats", &luxcore::detail::RenderSessionImpl::UpdateStats,
+         py::call_guard<py::gil_scoped_release>())
     .def("GetStats", &luxcore::detail::RenderSessionImpl::GetStats)
-    .def("WaitNewFrame", &luxcore::detail::RenderSessionImpl::WaitNewFrame)
-    .def("WaitForDone", &luxcore::detail::RenderSessionImpl::WaitForDone)
+    .def("WaitNewFrame", &luxcore::detail::RenderSessionImpl::WaitNewFrame,
+         py::call_guard<py::gil_scoped_release>())
+    .def("WaitForDone", &luxcore::detail::RenderSessionImpl::WaitForDone,
+         py::call_guard<py::gil_scoped_release>())
     .def("HasDone", &luxcore::detail::RenderSessionImpl::HasDone)
     .def("Parse", &luxcore::detail::RenderSessionImpl::Parse)
     .def("GetRenderState", &RenderSession_GetRenderState, py::return_value_policy::take_ownership)
-    .def("SaveResumeFile", &luxcore::detail::RenderSessionImpl::SaveResumeFile)
+    .def("SaveResumeFile", &luxcore::detail::RenderSessionImpl::SaveResumeFile,
+         py::call_guard<py::gil_scoped_release>())
   ;
 
   m.def("GetOpenVDBGridNames", &GetOpenVDBGridNames);
