@@ -34,7 +34,7 @@ public:
 
 	virtual TextureType GetType() const { return GREATER_THAN_TEX; }
 	virtual float GetFloatValue(const HitPoint &hitPoint) const;
-	virtual luxrays::Spectrum GetSpectrumValue(const HitPoint &hitPoint) const;
+	virtual luxrays::Spectrum EvalSpectrumValue(const HitPoint &hitPoint) const;
 	virtual float Y() const { 
 		// Doesn't really make sense here
 		return (GetTexture1().Y() > GetTexture2().Y()) ? 1.f : 0.f;

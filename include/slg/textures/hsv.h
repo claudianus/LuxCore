@@ -36,7 +36,7 @@ public:
 
 	virtual TextureType GetType() const { return HSV_TEX; }
 	virtual float GetFloatValue(const HitPoint &hitPoint) const;
-	virtual luxrays::Spectrum GetSpectrumValue(const HitPoint &hitPoint) const;
+	virtual luxrays::Spectrum EvalSpectrumValue(const HitPoint &hitPoint) const;
 	virtual float Y() const;
 	virtual float Filter() const;
 

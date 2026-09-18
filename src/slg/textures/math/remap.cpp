@@ -36,7 +36,7 @@ float RemapTexture::GetFloatValue(const HitPoint &hitPoint) const {
 	return ClampedRemap(value, sourceMin, sourceMax, targetMin, targetMax);
 }
 
-Spectrum RemapTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum RemapTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	const Spectrum value = GetValueTex().GetSpectrumValue(hitPoint);
 	const float sourceMin = GetSourceMinTex().GetFloatValue(hitPoint);
 	const float sourceMax = GetSourceMaxTex().GetFloatValue(hitPoint);

@@ -35,7 +35,7 @@ float DivideTexture::GetFloatValue(const HitPoint &hitPoint) const {
 	return value1 / value2;
 }
 
-Spectrum DivideTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum DivideTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	const Spectrum value2 = GetTexture2().GetSpectrumValue(hitPoint);
 	if (value2.Black())
 		return Spectrum(0.f);

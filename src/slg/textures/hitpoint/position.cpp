@@ -31,7 +31,7 @@ float PositionTexture::GetFloatValue(const HitPoint &hitPoint) const {
 	return hitPoint.p.x;
 }
 
-Spectrum PositionTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum PositionTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return Spectrum(&hitPoint.p.x);
 }
 

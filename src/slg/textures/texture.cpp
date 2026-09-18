@@ -86,6 +86,54 @@ Normal Texture::Bump(const HitPoint &hitPoint, const float sampleDistance) const
 }
 
 //------------------------------------------------------------------------------
+// Spectral transport
+//------------------------------------------------------------------------------
+
+// Textures whose EvalSpectrumValue output is a genuine RGB value (i.e. the
+// source data is authored in RGB and not a scalar field or a combination of
+// children). Only these are upsampled from RGB to the path wavelengths;
+// everything else either passes through values already expressed in
+// wavelength bins (combiners) or is non-color data (vectors, IDs, masks).
+static bool IsSpectralLeafRGB(const TextureType t) {
+	switch (t) {
+		case CONST_FLOAT3:
+		case IMAGEMAP:
+		case HITPOINTCOLOR:
+		case OBJECTID_COLOR_TEX:
+		case MARBLE:
+		case HSV_TEX:
+		case BLENDER_MAGIC:
+		case BLENDER_MUSGRAVE:
+		case BLENDER_VORONOI:
+			return true;
+		default:
+			return false;
+	}
+}
+
+Spectrum Texture::GetSpectrumValue(const HitPoint &hitPoint) const {
+	const PathWavelengths *sw = Spectral::Current();
+	if (!sw)
+		return EvalSpectrumValue(hitPoint);
+	return EvalSpectralValue(hitPoint, *sw, false);
+}
+
+Spectrum Texture::GetEmissionSpectrumValue(const HitPoint &hitPoint) const {
+	const PathWavelengths *sw = Spectral::Current();
+	if (!sw)
+		return EvalSpectrumValue(hitPoint);
+	return EvalSpectralValue(hitPoint, *sw, true);
+}
+
+Spectrum Texture::EvalSpectralValue(const HitPoint &hitPoint,
+		const PathWavelengths &sw, const bool emission) const {
+	const Spectrum v = EvalSpectrumValue(hitPoint);
+	if (!IsSpectralLeafRGB(GetType()))
+		return v;
+	return emission ? Spectral::Emission(v, sw) : Spectral::Reflectance(v, sw);
+}
+
+//------------------------------------------------------------------------------
 // Texture utility functions
 //------------------------------------------------------------------------------
 

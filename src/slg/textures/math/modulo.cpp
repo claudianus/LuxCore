@@ -38,7 +38,7 @@ float ModuloTexture::GetFloatValue(const HitPoint &hitPoint) const {
     return fmod(GetTexture().GetFloatValue(hitPoint), modulus);
 }
 
-Spectrum ModuloTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum ModuloTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
     return Spectrum(GetFloatValue(hitPoint));
 }
 

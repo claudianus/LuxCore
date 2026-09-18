@@ -70,6 +70,7 @@
 #include "slg/textures/math/modulo.h"
 #include "slg/textures/math/power.h"
 #include "slg/textures/math/random.h"
+#include "slg/textures/whitenoise.h"
 #include "slg/textures/math/remap.h"
 #include "slg/textures/math/rounding.h"
 #include "slg/textures/math/scale.h"
@@ -474,9 +475,18 @@ TextureUPtr Scene::CreateTexture(const string &texName, const Properties &props)
 		tex = std::make_unique<CloudTexture>(CreateTextureMapping3D(propName + ".mapping", props), radius, noisescale, turbulence,
 								sharpness, noiseoffset, spheres, octaves, omega, variability, baseflatness, spheresize);
 	} else if (texType == "blackbody") {
-		const float temperature = Max(props.Get(Property(propName + ".temperature")(6500.0)).Get<double>(), 0.0);
+		const Property &tempProp = props.Get(Property(propName + ".temperature")(6500.0));
 		const bool normalize = props.Get(Property(propName + ".normalize")(false)).Get<bool>();
-		tex = std::make_unique<BlackBodyTexture>(temperature, normalize);
+
+		if (texDefs.IsTextureDefined(tempProp.GetValuesString())) {
+			// Textured temperature (e.g. a densitygrid temperature channel):
+			// eval per-point, nominal falls back to the mid-range.
+			auto &tempTex = GetTexture(tempProp);
+			tex = std::make_unique<BlackBodyTexture>(tempTex, 6500.f, normalize);
+		} else {
+			const float temperature = Max(tempProp.Get<double>(0), 0.0);
+			tex = std::make_unique<BlackBodyTexture>(temperature, normalize);
+		}
 	} else if (texType == "irregulardata") {
 		if (!props.IsDefined(propName + ".wavelengths"))
 			throw runtime_error("Missing wavelengths property in irregulardata texture: " + propName);
@@ -624,6 +634,10 @@ TextureUPtr Scene::CreateTexture(const string &texName, const Properties &props)
 		auto& texture = GetTexture(props.Get(Property(propName + ".texture")(1.f)));
 		const u_int seedOffset = props.Get(Property(propName + ".seed")(0u)).Get<u_int>();
 		tex = std::make_unique<RandomTexture>(texture, seedOffset);
+	} else if (texType == "whitenoise") {
+		auto& texture = GetTexture(props.Get(Property(propName + ".texture")(1.f)));
+		const u_int seedOffset = props.Get(Property(propName + ".seed")(0u)).Get<u_int>();
+		tex = std::make_unique<WhiteNoiseTexture>(texture, seedOffset);
 	} else if (texType == "wireframe") {
 		auto& borderTex = GetTexture(props.Get(Property(propName + ".border")(1.f)));
 		auto& insideTex = GetTexture(props.Get(Property(propName + ".inside")(0.f)));

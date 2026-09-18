@@ -27,10 +27,10 @@ using namespace slg;
 //------------------------------------------------------------------------------
 
 float UVTexture::GetFloatValue(const HitPoint &hitPoint) const {
-	return GetSpectrumValue(hitPoint).Y();
+	return EvalSpectrumValue(hitPoint).Y();
 }
 
-Spectrum UVTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum UVTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	const UV uv = mapping->Map(hitPoint);
 	
 	return Spectrum(uv.u - Floor2Int(uv.u), uv.v - Floor2Int(uv.v), 0.f);

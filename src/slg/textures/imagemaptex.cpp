@@ -374,7 +374,7 @@ float ImageMapTexture::GetFloatValue(const HitPoint &hitPoint) const {
 	return gain * value;
 }
 
-Spectrum ImageMapTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum ImageMapTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	const UV pos = mapping->Map(hitPoint);
 
 	const Spectrum value = randomizedTiling ? RandomizedTilingGetSpectrumValue(pos) : GetImageMap().GetSpectrum(pos);

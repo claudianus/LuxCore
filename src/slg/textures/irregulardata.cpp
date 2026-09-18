@@ -36,7 +36,7 @@ IrregularDataTexture::IrregularDataTexture(const u_int n,
 	copy(wl, wl + n, waveLengths.begin());
 	copy(dt, dt + n, data.begin());
 
-	IrregularSPD spd(&waveLengths[0], &data[0], n, resolution);
+	spd = IrregularSPD(&waveLengths[0], &data[0], n, resolution);
 
 	if (emission) {
 		ColorSystem colorSpace;
@@ -46,6 +46,13 @@ IrregularDataTexture::IrregularDataTexture(const u_int n,
 			1.f / 3.f, 1.f / 3.f, 1.f);
 		rgb = colorSpace.ToRGBConstrained(spd.ToNormalizedXYZ()).Clamp(0.f);
 	}
+}
+
+// Evaluate the authored SPD at the path wavelengths (instead of an RGB
+// upsample), normalized to the same luminance as the RGB fallback.
+Spectrum IrregularDataTexture::EvalSpectralValue(const HitPoint &hitPoint,
+		const PathWavelengths &sw, const bool em) const {
+	return Spectral::WithLuminance(Spectral::EvaluateSPD(spd, sw), sw, rgb.Y());
 }
 
 PropertiesUPtr IrregularDataTexture::ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const {

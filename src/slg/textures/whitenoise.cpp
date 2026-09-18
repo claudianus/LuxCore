@@ -16,52 +16,44 @@
  * limitations under the License.                                          *
  ***************************************************************************/
 
-#include "slg/textures/hitpoint/hitpointaov.h"
+#include "luxrays/core/randomgen.h"
+
+#include "slg/textures/whitenoise.h"
 
 using namespace std;
 using namespace luxrays;
 using namespace slg;
 
 //------------------------------------------------------------------------------
-// HitPointVertexAOV texture
+// White noise texture
 //------------------------------------------------------------------------------
 
-float HitPointVertexAOVTexture::GetFloatValue(const HitPoint &hitPoint) const {
-	return hitPoint.GetVertexAOV(dataIndex);
+float WhiteNoiseTexture::GetFloatValue(const HitPoint &hitPoint) const {
+	const Spectrum seed = GetTexture().GetSpectrumValue(hitPoint);
+
+	TauswortheRandomGenerator rnd(
+			SeedFromVector(seed.c[0], seed.c[1], seed.c[2]) + seedOffset);
+
+	return rnd.floatValue();
 }
 
-Spectrum HitPointVertexAOVTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
-	return Spectrum(hitPoint.GetVertexAOV(dataIndex));
+Spectrum WhiteNoiseTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
+	const Spectrum seed = GetTexture().GetSpectrumValue(hitPoint);
+
+	// Three decorrelated draws give an uncorrelated RGB triplet.
+	TauswortheRandomGenerator rnd(
+			SeedFromVector(seed.c[0], seed.c[1], seed.c[2]) + seedOffset);
+
+	return Spectrum(rnd.floatValue(), rnd.floatValue(), rnd.floatValue());
 }
 
-PropertiesUPtr HitPointVertexAOVTexture::ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const {
+PropertiesUPtr WhiteNoiseTexture::ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const {
 	auto props = std::make_unique<Properties>();
 
 	const string name = GetName();
-	props->Set(Property("scene.textures." + name + ".type")("hitpointvertexaov"));
-	props->Set(Property("scene.textures." + name + ".dataIndex")(dataIndex));
-
-	return props;
-}
-
-//------------------------------------------------------------------------------
-// HitPointTriangleAOV texture
-//------------------------------------------------------------------------------
-
-float HitPointTriangleAOVTexture::GetFloatValue(const HitPoint &hitPoint) const {
-	return hitPoint.GetTriAOV(dataIndex);
-}
-
-Spectrum HitPointTriangleAOVTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
-	return Spectrum(hitPoint.GetTriAOV(dataIndex));
-}
-
-PropertiesUPtr HitPointTriangleAOVTexture::ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const {
-	auto props = std::make_unique<Properties>();
-
-	const string name = GetName();
-	props->Set(Property("scene.textures." + name + ".type")("hitpointtriangleaov"));
-	props->Set(Property("scene.textures." + name + ".dataIndex")(dataIndex));
+	props->Set(Property("scene.textures." + name + ".type")("whitenoise"));
+	props->Set(Property("scene.textures." + name + ".texture")(GetTexture().GetSDLValue()));
+	props->Set(Property("scene.textures." + name + ".seed")(seedOffset));
 
 	return props;
 }

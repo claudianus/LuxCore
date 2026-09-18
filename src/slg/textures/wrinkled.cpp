@@ -31,7 +31,7 @@ float WrinkledTexture::GetFloatValue(const HitPoint &hitPoint) const {
 	return Turbulence(p, omega, octaves);
 }
 
-Spectrum WrinkledTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum WrinkledTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return Spectrum(GetFloatValue(hitPoint));
 }
 

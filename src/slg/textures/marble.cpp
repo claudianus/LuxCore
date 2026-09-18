@@ -26,7 +26,7 @@ using namespace slg;
 // Marble texture
 //------------------------------------------------------------------------------
 
-Spectrum MarbleTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum MarbleTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	Point P(mapping->Map(hitPoint));
 	P *= scale;
 
@@ -86,7 +86,7 @@ float MarbleTexture::Filter() const {
 }
 
 float MarbleTexture::GetFloatValue(const HitPoint &hitPoint) const {
-	return GetSpectrumValue(hitPoint).Y();
+	return EvalSpectrumValue(hitPoint).Y();
 }
 
 PropertiesUPtr MarbleTexture::ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const {

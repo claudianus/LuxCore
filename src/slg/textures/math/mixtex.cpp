@@ -42,7 +42,7 @@ float MixTexture::GetFloatValue(const HitPoint &hitPoint) const {
 	return Lerp(amt, value1, value2);
 }
 
-Spectrum MixTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum MixTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	const float amt = Clamp(GetAmountTexture().GetFloatValue(hitPoint), 0.f, 1.f);
 	const Spectrum value1 = GetTexture1().GetSpectrumValue(hitPoint);
 	const Spectrum value2 = GetTexture2().GetSpectrumValue(hitPoint);

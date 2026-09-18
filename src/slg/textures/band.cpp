@@ -69,10 +69,10 @@ float BandTexture::Filter() const {
 }
 
 float BandTexture::GetFloatValue(const HitPoint &hitPoint) const {
-	return GetSpectrumValue(hitPoint).Y();
+	return EvalSpectrumValue(hitPoint).Y();
 }
 
-Spectrum BandTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum BandTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	const float a = Clamp(GetAmount().GetFloatValue(hitPoint), 0.f, 1.f);
 
 	if (a < GetOffsets().front())

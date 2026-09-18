@@ -58,7 +58,7 @@ float FresnelApproxNTexture::GetFloatValue(const HitPoint &hitPoint) const {
 	return FresnelApproxN(GetTexture().GetFloatValue(hitPoint));
 }
 
-Spectrum FresnelApproxNTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum FresnelApproxNTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return FresnelApproxN(GetTexture().GetSpectrumValue(hitPoint));
 }
 
@@ -74,7 +74,7 @@ float FresnelApproxKTexture::GetFloatValue(const HitPoint &hitPoint) const {
 	return FresnelApproxK(GetTexture().GetFloatValue(hitPoint));
 }
 
-Spectrum FresnelApproxKTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum FresnelApproxKTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return FresnelApproxK(GetTexture().GetSpectrumValue(hitPoint));
 }
 

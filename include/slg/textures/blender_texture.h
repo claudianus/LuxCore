@@ -35,7 +35,7 @@ public:
 
 	virtual TextureType GetType() const { return BLENDER_BLEND; }
 	virtual float GetFloatValue(const HitPoint &hitPoint) const;
-	virtual luxrays::Spectrum GetSpectrumValue(const HitPoint &hitPoint) const;
+	virtual luxrays::Spectrum EvalSpectrumValue(const HitPoint &hitPoint) const;
 	// The following methods don't make very much sense in this case. I have no
 	// information about the color.
 	virtual float Y() const { return .5f; }
@@ -67,7 +67,7 @@ public:
 
 	virtual TextureType GetType() const { return BLENDER_CLOUDS; }
 	virtual float GetFloatValue(const HitPoint &hitPoint) const;
-	virtual luxrays::Spectrum GetSpectrumValue(const HitPoint &hitPoint) const;
+	virtual luxrays::Spectrum EvalSpectrumValue(const HitPoint &hitPoint) const;
 	// The following methods don't make very much sense in this case. I have no
 	// information about the color.
 	virtual float Y() const { return .5f; }
@@ -104,7 +104,7 @@ public:
 
 	virtual TextureType GetType() const { return BLENDER_DISTORTED_NOISE; }
 	virtual float GetFloatValue(const HitPoint &hitPoint) const;
-	virtual luxrays::Spectrum GetSpectrumValue(const HitPoint &hitPoint) const;
+	virtual luxrays::Spectrum EvalSpectrumValue(const HitPoint &hitPoint) const;
 	// The following methods don't make very much sense in this case. I have no
 	// information about the color.
 	virtual float Y() const { return .5f; }
@@ -139,7 +139,7 @@ public:
 
 	virtual TextureType GetType() const { return BLENDER_MAGIC; }
 	virtual float GetFloatValue(const HitPoint &hitPoint) const;
-	virtual luxrays::Spectrum GetSpectrumValue(const HitPoint &hitPoint) const;
+	virtual luxrays::Spectrum EvalSpectrumValue(const HitPoint &hitPoint) const;
 	virtual float Y() const;
 	virtual float Filter() const;
 
@@ -171,7 +171,7 @@ public:
 
 	virtual TextureType GetType() const { return BLENDER_MARBLE; }
 	virtual float GetFloatValue(const HitPoint &hitPoint) const;
-	virtual luxrays::Spectrum GetSpectrumValue(const HitPoint &hitPoint) const;
+	virtual luxrays::Spectrum EvalSpectrumValue(const HitPoint &hitPoint) const;
 	// The following methods don't make very much sense in this case. I have no
 	// information about the color.
 	virtual float Y() const { return .5f; }
@@ -214,7 +214,7 @@ public:
 
 	virtual TextureType GetType() const { return BLENDER_MUSGRAVE; }
 	virtual float GetFloatValue(const HitPoint &hitPoint) const;
-	virtual luxrays::Spectrum GetSpectrumValue(const HitPoint &hitPoint) const;
+	virtual luxrays::Spectrum EvalSpectrumValue(const HitPoint &hitPoint) const;
 	// The following methods don't make very much sense in this case. I have no
 	// information about the color.
 	virtual float Y() const { return .5f; }
@@ -260,7 +260,7 @@ public:
 
 	virtual TextureType GetType() const { return BLENDER_NOISE; }
 	virtual float GetFloatValue(const HitPoint &hitPoint) const;
-	virtual luxrays::Spectrum GetSpectrumValue(const HitPoint &hitPoint) const;
+	virtual luxrays::Spectrum EvalSpectrumValue(const HitPoint &hitPoint) const;
 	// The following methods don't make very much sense in this case. I have no
 	// information about the color.
 	virtual float Y() const { return .5f; }
@@ -289,7 +289,7 @@ public:
 
 	virtual TextureType GetType() const { return BLENDER_STUCCI; }
 	virtual float GetFloatValue(const HitPoint &hitPoint) const;
-	virtual luxrays::Spectrum GetSpectrumValue(const HitPoint &hitPoint) const;
+	virtual luxrays::Spectrum EvalSpectrumValue(const HitPoint &hitPoint) const;
 	// The following methods don't make very much sense in this case. I have no
 	// information about the color.
 	virtual float Y() const { return .5f; }
@@ -327,7 +327,7 @@ public:
 
 	virtual TextureType GetType() const { return BLENDER_VORONOI; }
 	virtual float GetFloatValue(const HitPoint &hitPoint) const;
-	virtual luxrays::Spectrum GetSpectrumValue(const HitPoint &hitPoint) const;
+	virtual luxrays::Spectrum EvalSpectrumValue(const HitPoint &hitPoint) const;
 	// The following methods don't make very much sense in this case. I have no
 	// information about the color.
 	virtual float Y() const { return .5f; }
@@ -372,7 +372,7 @@ public:
 
 	virtual TextureType GetType() const { return BLENDER_WOOD; }
 	virtual float GetFloatValue(const HitPoint &hitPoint) const;
-	virtual luxrays::Spectrum GetSpectrumValue(const HitPoint &hitPoint) const;
+	virtual luxrays::Spectrum EvalSpectrumValue(const HitPoint &hitPoint) const;
 	// The following methods don't make very much sense in this case. I have no
 	// information about the color.
 	virtual float Y() const { return .5f; }

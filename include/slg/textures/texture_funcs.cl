@@ -44,6 +44,7 @@ OPENCL_FORCE_NOT_INLINE float Texture_GetFloatValueSlowPath(const uint texIndex,
 
 	uint evalStackOffsetVal = 0;
 	uint *evalStackOffset = &evalStackOffsetVal; // Used by macros
+	uint spectralRawDepth = 0;
 	for (uint i = 0; i < evalFloatOpLength; ++i) {
 #if defined(DEBUG_PRINTF_TEXTURE_EVAL)
 		printf("EvalOp: #%d\n", i);
@@ -51,7 +52,7 @@ OPENCL_FORCE_NOT_INLINE float Texture_GetFloatValueSlowPath(const uint texIndex,
 
 		__global const TextureEvalOp* restrict evalOp = &texEvalOps[evalFloatOpStartIndex + i];
 
-		Texture_EvalOp(evalOp, evalStack, &evalStackOffsetVal, hitPoint, 0.f TEXTURES_PARAM);
+		Texture_EvalOp(evalOp, evalStack, &evalStackOffsetVal, hitPoint, 0.f, &spectralRawDepth TEXTURES_PARAM);
 	}
 #if defined(DEBUG_PRINTF_TEXTURE_EVAL)
 	printf("evalStackOffset=#%d\n", evalStackOffsetVal);
@@ -115,6 +116,7 @@ OPENCL_FORCE_NOT_INLINE float3 Texture_GetSpectrumValueSlowPath(const uint texIn
 
 	uint evalStackOffsetVal = 0;
 	uint *evalStackOffset = &evalStackOffsetVal; // Used by macros
+	uint spectralRawDepth = 0;
 	for (uint i = 0; i < evalSpectrumOpLength; ++i) {
 #if defined(DEBUG_PRINTF_TEXTURE_EVAL)
 		printf("EvalOp: #%d\n", i);
@@ -122,7 +124,7 @@ OPENCL_FORCE_NOT_INLINE float3 Texture_GetSpectrumValueSlowPath(const uint texIn
 
 		__global const TextureEvalOp* restrict evalOp = &texEvalOps[evalSpectrumOpStartIndex + i];
 
-		Texture_EvalOp(evalOp, evalStack, &evalStackOffsetVal, hitPoint, 0.f TEXTURES_PARAM);
+		Texture_EvalOp(evalOp, evalStack, &evalStackOffsetVal, hitPoint, 0.f, &spectralRawDepth TEXTURES_PARAM);
 	}
 #if defined(DEBUG_PRINTF_TEXTURE_EVAL)
 	printf("evalStackOffset=#%d\n", evalStackOffsetVal);
@@ -149,10 +151,22 @@ OPENCL_FORCE_INLINE float3 Texture_GetSpectrumValue(const uint texIndex,
 		//----------------------------------------------------------------------
 		case CONST_FLOAT:
 			return ConstFloatTexture_ConstEvaluateSpectrum(tex);
-		case CONST_FLOAT3:
-			return ConstFloat3Texture_ConstEvaluateSpectrum(tex);
-		case IMAGEMAP:
-			return ImageMapTexture_ConstEvaluateSpectrum(tex, hitPoint TEXTURES_PARAM);
+		case CONST_FLOAT3: {
+			const float3 v = ConstFloat3Texture_ConstEvaluateSpectrum(tex);
+#if defined(SLG_SPECTRAL)
+			return Spectral_LeafEval(v, hitPoint);
+#else
+			return v;
+#endif
+		}
+		case IMAGEMAP: {
+			const float3 v = ImageMapTexture_ConstEvaluateSpectrum(tex, hitPoint TEXTURES_PARAM);
+#if defined(SLG_SPECTRAL)
+			return Spectral_LeafEval(v, hitPoint);
+#else
+			return v;
+#endif
+		}
 		//----------------------------------------------------------------------
 		// Fall back to the slow path
 		//----------------------------------------------------------------------
@@ -188,6 +202,7 @@ OPENCL_FORCE_NOT_INLINE float3 Texture_Bump(const uint texIndex,
 
 	uint evalStackOffsetVal = 0;
 	uint *evalStackOffset = &evalStackOffsetVal; // Used by macros
+	uint spectralRawDepth = 0;
 	for (uint i = 0; i < evalBumpOpLength; ++i) {
 #if defined(DEBUG_PRINTF_TEXTURE_EVAL)
 		printf("EvalOp: #%d\n", i);
@@ -195,7 +210,7 @@ OPENCL_FORCE_NOT_INLINE float3 Texture_Bump(const uint texIndex,
 
 		__global const TextureEvalOp* restrict evalOp = &texEvalOps[evalBumpOpStartIndex + i];
 
-		Texture_EvalOp(evalOp, evalStack, &evalStackOffsetVal, hitPoint, sampleDistance TEXTURES_PARAM);
+		Texture_EvalOp(evalOp, evalStack, &evalStackOffsetVal, hitPoint, sampleDistance, &spectralRawDepth TEXTURES_PARAM);
 	}
 #if defined(DEBUG_PRINTF_TEXTURE_EVAL)
 	printf("evalStackOffset=#%d\n", evalStackOffsetVal);

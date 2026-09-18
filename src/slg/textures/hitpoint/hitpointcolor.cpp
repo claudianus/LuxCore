@@ -30,7 +30,7 @@ float HitPointColorTexture::GetFloatValue(const HitPoint &hitPoint) const {
 	return hitPoint.GetColor(dataIndex).Y();
 }
 
-Spectrum HitPointColorTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum HitPointColorTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return hitPoint.GetColor(dataIndex);
 }
 
@@ -52,7 +52,7 @@ float HitPointAlphaTexture::GetFloatValue(const HitPoint &hitPoint) const {
 	return hitPoint.GetAlpha(dataIndex);
 }
 
-Spectrum HitPointAlphaTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum HitPointAlphaTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return Spectrum(hitPoint.GetAlpha(dataIndex));
 }
 
@@ -76,7 +76,7 @@ float HitPointGreyTexture::GetFloatValue(const HitPoint &hitPoint) const {
 	return (channel > 2) ? color.Y() : color.c[channel];
 }
 
-Spectrum HitPointGreyTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum HitPointGreyTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	const Spectrum color = hitPoint.GetColor(dataIndex);
 	const float v = (channel > 2) ? color.Y() : color.c[channel];
 

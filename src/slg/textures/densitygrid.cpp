@@ -197,7 +197,7 @@ Spectrum DensityGridTexture::D(int x, int y, int z) const {
 	return imageMap.GetStorage().GetSpectrum(((Clamp(z, 0, nz - 1) * ny) + Clamp(y, 0, ny - 1)) * nx + Clamp(x, 0, nx - 1));
 }
 
-Spectrum DensityGridTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum DensityGridTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	const Point P(mapping->Map(hitPoint));
 
 	float x, y, z;
@@ -270,7 +270,7 @@ Spectrum DensityGridTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
 }
 
 float DensityGridTexture::GetFloatValue(const HitPoint &hitPoint) const {
-	return GetSpectrumValue(hitPoint).Y();
+	return EvalSpectrumValue(hitPoint).Y();
 }
 
 PropertiesUPtr DensityGridTexture::ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const {

@@ -27,10 +27,10 @@ using namespace slg;
 //------------------------------------------------------------------------------
 
 float MakeFloat3Texture::GetFloatValue(const HitPoint &hitPoint) const {
-	return GetSpectrumValue(hitPoint).Y();
+	return EvalSpectrumValue(hitPoint).Y();
 }
 
-Spectrum MakeFloat3Texture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum MakeFloat3Texture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	const float v1 = GetTexture1().GetFloatValue(hitPoint);
 	const float v2 = GetTexture2().GetFloatValue(hitPoint);
 	const float v3 = GetTexture3().GetFloatValue(hitPoint);

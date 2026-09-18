@@ -34,7 +34,7 @@ public:
 
 	virtual TextureType GetType() const { return SHADING_NORMAL_TEX; }
 	virtual float GetFloatValue(const HitPoint &hitPoint) const;
-	virtual luxrays::Spectrum GetSpectrumValue(const HitPoint &hitPoint) const;
+	virtual luxrays::Spectrum EvalSpectrumValue(const HitPoint &hitPoint) const;
 	// The following methods don't make very much sense in this case. I have no
 	// information about the color.
 	virtual float Y() const { return 1.f; }

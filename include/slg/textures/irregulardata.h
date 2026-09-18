@@ -19,6 +19,8 @@
 #ifndef _SLG_IRREGULARDATATEX_H
 #define	_SLG_IRREGULARDATATEX_H
 
+#include "luxrays/core/color/spds/irregular.h"
+
 #include "slg/textures/texture.h"
 
 namespace slg {
@@ -35,7 +37,9 @@ public:
 
 	virtual TextureType GetType() const { return IRREGULARDATA_TEX; }
 	virtual float GetFloatValue(const HitPoint &hitPoint) const { return rgb.Y(); }
-	virtual luxrays::Spectrum GetSpectrumValue(const HitPoint &hitPoint) const { return rgb; }
+	virtual luxrays::Spectrum EvalSpectrumValue(const HitPoint &hitPoint) const { return rgb; }
+	virtual luxrays::Spectrum EvalSpectralValue(const HitPoint &hitPoint,
+			const luxrays::PathWavelengths &sw, const bool em) const;
 	virtual float Y() const { return rgb.Y(); }
 	virtual float Filter() const { return rgb.Filter(); }
 
@@ -51,6 +55,7 @@ private:
 	std::vector<float> data;
 	float resolution;
 
+	luxrays::IrregularSPD spd;
 	luxrays::Spectrum rgb;
 	bool emission;
 };

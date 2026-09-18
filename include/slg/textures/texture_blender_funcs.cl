@@ -421,7 +421,8 @@ OPENCL_FORCE_NOT_INLINE void BlenderMagicTexture_EvalOp(
 		__global float *evalStack,
 		uint *evalStackOffset,
 		__global const HitPoint *hitPoint,
-		const float sampleDistance
+		const float sampleDistance,
+		const uint spectralRawDepth
 		TEXTURES_PARAM_DECL) {
 	switch (evalType) {
 		case EVAL_FLOAT: {
@@ -437,7 +438,7 @@ OPENCL_FORCE_NOT_INLINE void BlenderMagicTexture_EvalOp(
 					texture->blenderMagic.noisedepth, texture->blenderMagic.turbulence,
 					texture->blenderMagic.contrast, texture->blenderMagic.bright,
 					&texture->blenderMagic.mapping TEXTURES_PARAM);
-			EvalStack_PushFloat3(eval);
+			EvalStack_PushFloat3(SLG_SPECTRAL_LEAF_EVAL_DEPTH(eval, spectralRawDepth));
 			break;
 		}
 		case EVAL_BUMP_GENERIC_OFFSET_U:
@@ -643,7 +644,8 @@ OPENCL_FORCE_NOT_INLINE void BlenderMusgraveTexture_EvalOp(
 		__global float *evalStack,
 		uint *evalStackOffset,
 		__global const HitPoint *hitPoint,
-		const float sampleDistance
+		const float sampleDistance,
+		const uint spectralRawDepth
 		TEXTURES_PARAM_DECL) {
 	switch (evalType) {
 		case EVAL_FLOAT: {
@@ -667,7 +669,7 @@ OPENCL_FORCE_NOT_INLINE void BlenderMusgraveTexture_EvalOp(
 					texture->blenderMusgrave.noisesize, texture->blenderMusgrave.contrast,
 					texture->blenderMusgrave.bright,
 					&texture->blenderMusgrave.mapping TEXTURES_PARAM);
-			EvalStack_PushFloat3(eval);
+			EvalStack_PushFloat3(SLG_SPECTRAL_LEAF_EVAL_DEPTH(eval, spectralRawDepth));
 			break;
 		}
 		case EVAL_BUMP_GENERIC_OFFSET_U:
@@ -1069,7 +1071,8 @@ OPENCL_FORCE_NOT_INLINE void BlenderVoronoiTexture_EvalOp(
 		__global float *evalStack,
 		uint *evalStackOffset,
 		__global const HitPoint *hitPoint,
-		const float sampleDistance
+		const float sampleDistance,
+		const uint spectralRawDepth
 		TEXTURES_PARAM_DECL) {
 	switch (evalType) {
 		case EVAL_FLOAT: {
@@ -1091,7 +1094,7 @@ OPENCL_FORCE_NOT_INLINE void BlenderVoronoiTexture_EvalOp(
 					texture->blenderVoronoi.intensity, texture->blenderVoronoi.exponent,
 					texture->blenderVoronoi.contrast, texture->blenderVoronoi.bright,
 					&texture->blenderVoronoi.mapping TEXTURES_PARAM);
-			EvalStack_PushFloat3(eval);
+			EvalStack_PushFloat3(SLG_SPECTRAL_LEAF_EVAL_DEPTH(eval, spectralRawDepth));
 			break;
 		}
 		case EVAL_BUMP_GENERIC_OFFSET_U:

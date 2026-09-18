@@ -33,7 +33,11 @@ NormalMapTexture::~NormalMapTexture() {
 }
 
 Normal NormalMapTexture::Bump(const HitPoint &hitPoint, const float sampleDistance) const {
-    const Spectrum rgb = GetTexture().GetSpectrumValue(hitPoint).Clamp(0.f, 1.f);
+	Spectrum rgb;
+	{
+		const Spectral::ScopePause pause;
+		rgb = GetTexture().GetSpectrumValue(hitPoint).Clamp(0.f, 1.f);
+	}
 
 	// Normal from normal map
 	Vector n(rgb.c);

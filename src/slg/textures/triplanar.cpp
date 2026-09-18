@@ -27,10 +27,10 @@ using namespace slg;
 //------------------------------------------------------------------------------
 
 float TriplanarTexture::GetFloatValue(const HitPoint &hitPoint) const {
-    return GetSpectrumValue(hitPoint).Y();
+    return EvalSpectrumValue(hitPoint).Y();
 }
 
-Spectrum TriplanarTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum TriplanarTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	Normal localShadeN;
 	const Point localPoint = mapping->Map(hitPoint, &localShadeN);
 	

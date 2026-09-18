@@ -30,7 +30,7 @@ float PowerTexture::GetFloatValue(const HitPoint &hitPoint) const {
 	return SafePow(GetBase().GetFloatValue(hitPoint), GetExponent().GetFloatValue(hitPoint));
 }
 
-Spectrum PowerTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum PowerTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return Spectrum(GetFloatValue(hitPoint));
 }
 

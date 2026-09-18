@@ -66,7 +66,7 @@ BrickTexture::BrickTexture(TextureMapping3DUPtr&& mp, TextureConstRef t1,
 }
 
 float BrickTexture::GetFloatValue(const HitPoint &hitPoint) const {
-	return GetSpectrumValue(hitPoint).Y();
+	return EvalSpectrumValue(hitPoint).Y();
 }
 
 bool BrickTexture::RunningAlternate(const Point &p, Point &i, Point &b,
@@ -156,7 +156,7 @@ bool BrickTexture::English(const Point &p, Point &i, Point &b) const {
 		b.x > mortarwidth;
 }
 
-Spectrum BrickTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum BrickTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 #define BRICK_EPSILON 1e-3f
 	const Point P(mapping->Map(hitPoint));
 

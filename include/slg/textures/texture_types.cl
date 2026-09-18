@@ -43,7 +43,13 @@ typedef enum {
 	// For the very special case of Triplanar texture
 	EVAL_BUMP_TRIPLANAR_STEP_1,
 	EVAL_BUMP_TRIPLANAR_STEP_2,
-	EVAL_BUMP_TRIPLANAR_STEP_3
+	EVAL_BUMP_TRIPLANAR_STEP_3,
+	// Spectral RGB-space-math scope (EVAL_SPECTRUM only): between these two
+	// ops, leaf RGB producers skip the spectral upsample (the parent performs
+	// RGB-space math on the children -- mirrors CPU Spectral::ScopePause for
+	// HSV/normal-map/dot-product/split subtrees).
+	EVAL_SPECTRUM_PAUSE_START,
+	EVAL_SPECTRUM_PAUSE_END
 } TextureEvalOpType;
 
 typedef struct {
@@ -66,7 +72,7 @@ typedef enum {
 	POWER_TEX, LESS_THAN_TEX, GREATER_THAN_TEX, ROUNDING_TEX, MODULO_TEX, SHADING_NORMAL_TEX,
     POSITION_TEX, SPLIT_FLOAT3, MAKE_FLOAT3, BRIGHT_CONTRAST_TEX, HITPOINTVERTEXAOV,
 	HITPOINTTRIANGLEAOV, TRIPLANAR_TEX, RANDOM_TEX, DISTORT_TEX,
-	BOMBING_TEX, // 44 textures
+	BOMBING_TEX, WHITENOISE_TEX, // 45 textures
 	// Procedural textures
 	BLENDER_BLEND, BLENDER_CLOUDS, BLENDER_DISTORTED_NOISE, BLENDER_MAGIC, BLENDER_MARBLE,
 	BLENDER_MUSGRAVE, BLENDER_NOISE, BLENDER_STUCCI, BLENDER_WOOD,  BLENDER_VORONOI,
@@ -377,6 +383,14 @@ typedef struct {
 
 typedef struct {
 	Spectrum rgb;
+	float temperature; // Kelvin; used by the SLG_SPECTRAL Planckian eval
+	// Index of the temperature texture, or (unsigned)-1 when the temperature
+	// is a compile-time constant. When set, the op pops a float off the eval
+	// stack and evaluates the Planckian/LUT at that per-point temperature.
+	unsigned int temperatureTexIndex;
+	// 1.0 when .normalize, else 89159.6 (recovers the raw physical scale the
+	// normalized LUT was baked against).
+	float rgbScale;
 } BlackBodyParam;
 
 typedef struct {
@@ -471,6 +485,11 @@ typedef struct {
 } RandomTexParam;
 
 typedef struct {
+	unsigned int texIndex;
+	unsigned int seedOffset;
+} WhiteNoiseTexParam;
+
+typedef struct {
 	float width;
 	unsigned int borderTexIndex, insideTexIndex;
 } WireFrameTexParam;
@@ -556,6 +575,7 @@ typedef struct {
 		BrightContrastTexParam brightContrastTex;
 		TriplanarTexParam triplanarTex;
 		RandomTexParam randomTex;
+		WhiteNoiseTexParam whiteNoiseTex;
 		WireFrameTexParam wireFrameTex;
 		DistortTexParam distortTex;
 		BombingTexParam bombingTex;

@@ -30,7 +30,7 @@ float FresnelConstTexture::GetFloatValue(const HitPoint &hitPoint) const {
 	return 0.f;
 }
 
-Spectrum FresnelConstTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum FresnelConstTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return GeneralEvaluate(n, k, .5f);
 }
 

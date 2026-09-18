@@ -31,7 +31,7 @@ float ShadingNormalTexture::GetFloatValue(const HitPoint &hitPoint) const {
 	return hitPoint.shadeN.x;
 }
 
-Spectrum ShadingNormalTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum ShadingNormalTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return Spectrum(&hitPoint.shadeN.x);
 }
 

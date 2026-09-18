@@ -34,7 +34,7 @@ public:
 
 	virtual TextureType GetType() const { return ABS_TEX; }
 	virtual float GetFloatValue(const HitPoint &hitPoint) const;
-	virtual luxrays::Spectrum GetSpectrumValue(const HitPoint &hitPoint) const;
+	virtual luxrays::Spectrum EvalSpectrumValue(const HitPoint &hitPoint) const;
 	virtual float Y() const { return fabsf(GetTexture().Y()); } // This can be not correct
 	virtual float Filter() const { return fabsf(GetTexture().Filter()); } // This can be not correct
 

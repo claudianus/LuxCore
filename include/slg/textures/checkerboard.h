@@ -38,7 +38,7 @@ public:
 
 	virtual TextureType GetType() const { return CHECKERBOARD2D; }
 	virtual float GetFloatValue(const HitPoint &hitPoint) const;
-	virtual luxrays::Spectrum GetSpectrumValue(const HitPoint &hitPoint) const;
+	virtual luxrays::Spectrum EvalSpectrumValue(const HitPoint &hitPoint) const;
 	virtual float Y() const { return (GetTexture1().Y() + GetTexture2().Y()) * .5f; }
 	virtual float Filter() const { return (GetTexture1().Filter() + GetTexture2().Filter()) * .5f; }
 
@@ -79,7 +79,7 @@ public:
 
 	virtual TextureType GetType() const { return CHECKERBOARD3D; }
 	virtual float GetFloatValue(const HitPoint &hitPoint) const;
-	virtual luxrays::Spectrum GetSpectrumValue(const HitPoint &hitPoint) const;
+	virtual luxrays::Spectrum EvalSpectrumValue(const HitPoint &hitPoint) const;
 	virtual float Y() const { return (GetTexture1().Y() + GetTexture2().Y()) * .5f; }
 	virtual float Filter() const { return (GetTexture1().Filter() + GetTexture2().Filter()) * .5f; }
 

@@ -64,7 +64,7 @@ float WireFrameTexture::GetFloatValue(const HitPoint &hitPoint) const {
 		GetInsideTex().GetFloatValue(hitPoint);
 }
 
-Spectrum WireFrameTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum WireFrameTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return Evaluate(hitPoint) ? GetBorderTex().GetSpectrumValue(hitPoint) :
 		GetInsideTex().GetSpectrumValue(hitPoint);
 }

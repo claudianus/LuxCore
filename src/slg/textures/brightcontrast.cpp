@@ -37,7 +37,7 @@ float BrightContrastTexture::GetFloatValue(const HitPoint &hitPoint) const {
 	return Clamp(value * a + b, 0.f, INFINITY);
 }
 
-Spectrum BrightContrastTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum BrightContrastTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	const float contrast = GetContrastTex().GetFloatValue(hitPoint);
 	const float brightness = GetBrightnessTex().GetFloatValue(hitPoint);
 

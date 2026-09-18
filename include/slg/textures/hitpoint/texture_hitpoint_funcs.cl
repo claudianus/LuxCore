@@ -40,7 +40,8 @@ OPENCL_FORCE_NOT_INLINE void HitPointColorTexture_EvalOp(
 		__global float *evalStack,
 		uint *evalStackOffset,
 		__global const HitPoint *hitPoint,
-		const float sampleDistance
+		const float sampleDistance,
+		const uint spectralRawDepth
 		TEXTURES_PARAM_DECL) {
 	switch (evalType) {
 		case EVAL_FLOAT: {
@@ -54,7 +55,7 @@ OPENCL_FORCE_NOT_INLINE void HitPointColorTexture_EvalOp(
 			const float3 eval = HitPointColorTexture_ConstEvaluateSpectrum(hitPoint,
 					texture->hitPointColor.dataIndex
 					TEXTURES_PARAM);
-			EvalStack_PushFloat3(eval);
+			EvalStack_PushFloat3(SLG_SPECTRAL_LEAF_EVAL_DEPTH(eval, spectralRawDepth));
 			break;
 		}
 		case EVAL_BUMP_GENERIC_OFFSET_U:

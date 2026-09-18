@@ -35,7 +35,7 @@ float RandomTexture::GetFloatValue(const HitPoint &hitPoint) const {
 	return rnd.floatValue();
 }
 
-Spectrum RandomTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum RandomTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return Spectrum(GetFloatValue(hitPoint));
 }
 

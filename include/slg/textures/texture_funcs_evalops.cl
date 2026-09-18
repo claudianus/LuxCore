@@ -28,13 +28,28 @@
 // Texture evaluation functions
 //------------------------------------------------------------------------------
 
+
 OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 		__global const TextureEvalOp* restrict evalOp,
 		__global float *evalStack,
 		uint *evalStackOffset,
 		__global const HitPoint *hitPoint,
-		const float sampleDistance
+		const float sampleDistance,
+		uint *spectralRawDepth
 		TEXTURES_PARAM_DECL) {
+	// Spectral RGB-space-math scope markers (see TextureEvalOpType)
+	if (evalOp->evalType == EVAL_SPECTRUM_PAUSE_START) {
+		++*spectralRawDepth;
+		return;
+	}
+	if (evalOp->evalType == EVAL_SPECTRUM_PAUSE_END) {
+		// Guard against underflow: ops are emitted in balanced pairs, but a
+		// 0->wrap would pin every subsequent leaf eval to RAW forever.
+		if (*spectralRawDepth > 0u)
+			--*spectralRawDepth;
+		return;
+	}
+
 	__global const Texture* restrict texture = &texs[evalOp->texIndex];
 
 #if defined(DEBUG_PRINTF_TEXTURE_EVAL)
@@ -81,7 +96,7 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 				}
 				case EVAL_SPECTRUM: {
 					const float3 eval = ConstFloat3Texture_ConstEvaluateSpectrum(texture);
-					EvalStack_PushFloat3(eval);
+					EvalStack_PushFloat3(SLG_SPECTRAL_LEAF_EVAL(eval));
 					break;
 				}	
 				case EVAL_BUMP: {
@@ -100,7 +115,7 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 		//----------------------------------------------------------------------
 		case IMAGEMAP: {
 			ImageMapTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
-					hitPoint, sampleDistance TEXTURES_PARAM);
+					hitPoint, sampleDistance, *spectralRawDepth TEXTURES_PARAM);
 			break;
 		}
 		//----------------------------------------------------------------------
@@ -359,7 +374,7 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 		//----------------------------------------------------------------------
 		case HITPOINTCOLOR:
 			HitPointColorTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
-					hitPoint, sampleDistance TEXTURES_PARAM);
+					hitPoint, sampleDistance, *spectralRawDepth TEXTURES_PARAM);
 			break;
 		//----------------------------------------------------------------------
 		// HITPOINTALPHA
@@ -422,14 +437,37 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 		// BLACKBODY_TEX
 		//----------------------------------------------------------------------
 		case BLACKBODY_TEX: {
+			// A textured temperature is pushed as a float by the sub-texture's
+			// eval; NULL_INDEX marks the compile-time-constant path.
+			const bool texTemp = (texture->blackBody.temperatureTexIndex != NULL_INDEX);
+			float temp = 0.f;
+			if (texTemp) {
+				EvalStack_PopFloat(temp);
+			}
 			switch (evalType) {
 				case EVAL_FLOAT: {
-					const float eval = BlackBodyTexture_ConstEvaluateFloat(VLOAD3F(texture->blackBody.rgb.c));
+					const float eval = texTemp ?
+							Spectrum_Y(BlackBody_LutRGB(temp, texture->blackBody.rgbScale)) :
+							BlackBodyTexture_ConstEvaluateFloat(VLOAD3F(texture->blackBody.rgb.c));
 					EvalStack_PushFloat(eval);
 					break;
 				}
 				case EVAL_SPECTRUM: {
-					const float3 eval = BlackBodyTexture_ConstEvaluateSpectrum(VLOAD3F(texture->blackBody.rgb.c));
+					const float3 rgb = texTemp ?
+							BlackBody_LutRGB(temp, texture->blackBody.rgbScale) :
+							VLOAD3F(texture->blackBody.rgb.c);
+#if defined(SLG_SPECTRAL)
+					// Native Planckian SPD eval at the path wavelengths
+					// (CPU BlackBodyTexture::EvalSpectralValue); raw RGB
+					// inside a PAUSE scope.
+					const float3 eval = (*spectralRawDepth == 0u) ?
+							Spectral_BlackbodyEval(
+									texTemp ? temp : texture->blackBody.temperature,
+									rgb, hitPoint) :
+							rgb;
+#else
+					const float3 eval = rgb;
+#endif
 					EvalStack_PushFloat3(eval);
 					break;
 				}
@@ -456,7 +494,7 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 				}
 				case EVAL_SPECTRUM: {
 					const float3 eval = IrregularDataTexture_ConstEvaluateSpectrum(VLOAD3F(texture->irregularData.rgb.c));
-					EvalStack_PushFloat3(eval);
+					EvalStack_PushFloat3(SLG_SPECTRAL_LEAF_EVAL(eval));
 					break;
 				}
 				case EVAL_BUMP: {
@@ -637,7 +675,7 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 					EvalStack_PopFloat3(tex1);
 
 					const float3 eval = HsvTexture_ConstEvaluateSpectrum(tex1, hueTex, satTex, valTex);
-					EvalStack_PushFloat3(eval);
+					EvalStack_PushFloat3(SLG_SPECTRAL_LEAF_EVAL(eval));
 					break;
 				}
 				case EVAL_BUMP_GENERIC_OFFSET_U:
@@ -787,7 +825,7 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 				}
 				case EVAL_SPECTRUM: {
 					const float3 eval = ObjectIDColorTexture_ConstEvaluateSpectrum(hitPoint);
-					EvalStack_PushFloat3(eval);
+					EvalStack_PushFloat3(SLG_SPECTRAL_LEAF_EVAL(eval));
 					break;
 				}
 				case EVAL_BUMP: {
@@ -1271,7 +1309,7 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 		//----------------------------------------------------------------------
 		case BLENDER_MAGIC:
 			BlenderMagicTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
-					hitPoint, sampleDistance TEXTURES_PARAM);
+					hitPoint, sampleDistance, *spectralRawDepth TEXTURES_PARAM);
 			break;
 		//----------------------------------------------------------------------
 		// BLENDER_MARBLE
@@ -1285,7 +1323,7 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 		//----------------------------------------------------------------------
 		case BLENDER_MUSGRAVE:
 			BlenderMusgraveTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
-					hitPoint, sampleDistance TEXTURES_PARAM);
+					hitPoint, sampleDistance, *spectralRawDepth TEXTURES_PARAM);
 			break;
 		//----------------------------------------------------------------------
 		// BLENDER_NOISE
@@ -1313,7 +1351,7 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 		//----------------------------------------------------------------------
 		case BLENDER_VORONOI:
 			BlenderVoronoiTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
-					hitPoint, sampleDistance TEXTURES_PARAM);
+					hitPoint, sampleDistance, *spectralRawDepth TEXTURES_PARAM);
 			break;
 		//----------------------------------------------------------------------
 		// CHECKERBOARD2D
@@ -1513,7 +1551,7 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 							texture->marble.octaves, texture->marble.variation,
 							&texture->marble.mapping
 							TEXTURES_PARAM);
-					EvalStack_PushFloat3(eval);
+					EvalStack_PushFloat3(SLG_SPECTRAL_LEAF_EVAL(eval));
 					break;
 				}
 				case EVAL_BUMP_GENERIC_OFFSET_U:
@@ -1869,6 +1907,13 @@ OPENCL_FORCE_NOT_INLINE void Texture_EvalOp(
 		//----------------------------------------------------------------------
 		case RANDOM_TEX:
 			RandomTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
+					hitPoint, sampleDistance TEXTURES_PARAM);
+			break;
+		//----------------------------------------------------------------------
+		// WHITENOISE_TEX
+		//----------------------------------------------------------------------
+		case WHITENOISE_TEX:
+			WhiteNoiseTexture_EvalOp(texture, evalType, evalStack, evalStackOffset,
 					hitPoint, sampleDistance TEXTURES_PARAM);
 			break;
 		//----------------------------------------------------------------------

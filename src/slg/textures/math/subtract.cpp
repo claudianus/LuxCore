@@ -30,7 +30,7 @@ float SubtractTexture::GetFloatValue(const HitPoint &hitPoint) const {
 	return GetTexture1().GetFloatValue(hitPoint) - GetTexture2().GetFloatValue(hitPoint);
 }
 
-Spectrum SubtractTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum SubtractTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return GetTexture1().GetSpectrumValue(hitPoint) - GetTexture2().GetSpectrumValue(hitPoint);
 }
 

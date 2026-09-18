@@ -90,7 +90,7 @@ float BlenderBlendTexture::GetFloatValue(const HitPoint &hitPoint) const {
 	return result;
 }
 
-Spectrum BlenderBlendTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum BlenderBlendTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return Spectrum(GetFloatValue(hitPoint));
 }
 
@@ -180,7 +180,7 @@ float BlenderCloudsTexture::GetFloatValue(const HitPoint &hitPoint) const {
     return clouds;
 }
 
-Spectrum BlenderCloudsTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum BlenderCloudsTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return Spectrum(GetFloatValue(hitPoint));
 }
 
@@ -311,7 +311,7 @@ float BlenderDistortedNoiseTexture::GetFloatValue(const HitPoint &hitPoint) cons
 	return result;
 }
 
-Spectrum BlenderDistortedNoiseTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum BlenderDistortedNoiseTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return Spectrum(GetFloatValue(hitPoint));
 }
 
@@ -343,10 +343,10 @@ BlenderMagicTexture::BlenderMagicTexture(TextureMapping3DUPtr&& mp, const int no
 }
 
 float BlenderMagicTexture::GetFloatValue(const HitPoint &hitPoint) const {
-	return GetSpectrumValue(hitPoint).Y();
+	return EvalSpectrumValue(hitPoint).Y();
 }
 
-Spectrum BlenderMagicTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum BlenderMagicTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	Point P(mapping->Map(hitPoint));
 	Spectrum s;
 
@@ -549,7 +549,7 @@ float BlenderMarbleTexture::GetFloatValue(const HitPoint &hitPoint) const {
     return result;
 }
 
-Spectrum BlenderMarbleTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum BlenderMarbleTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return Spectrum(GetFloatValue(hitPoint));
 }
 
@@ -705,7 +705,7 @@ float BlenderMusgraveTexture::GetFloatValue(const HitPoint &hitPoint) const {
     return result;
 }
 
-Spectrum BlenderMusgraveTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum BlenderMusgraveTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return Spectrum(GetFloatValue(hitPoint));
 }
 
@@ -818,7 +818,7 @@ float BlenderNoiseTexture::GetFloatValue(const HitPoint &hitPoint) const {
 	return result;
 }
 
-Spectrum BlenderNoiseTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum BlenderNoiseTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return Spectrum(GetFloatValue(hitPoint));
 }
 
@@ -902,7 +902,7 @@ float BlenderStucciTexture::GetFloatValue(const HitPoint &hitPoint) const {
     return result;
 }
 
-Spectrum BlenderStucciTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum BlenderStucciTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return Spectrum(GetFloatValue(hitPoint));
 }
 
@@ -1031,7 +1031,7 @@ float BlenderVoronoiTexture::GetFloatValue(const HitPoint &hitPoint) const {
     return result;
 }
 
-Spectrum BlenderVoronoiTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum BlenderVoronoiTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return Spectrum(GetFloatValue(hitPoint));
 }
 
@@ -1172,7 +1172,7 @@ float BlenderWoodTexture::GetFloatValue(const HitPoint &hitPoint) const {
     return wood;
 }
 
-Spectrum BlenderWoodTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum BlenderWoodTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return Spectrum(GetFloatValue(hitPoint));
 }
 

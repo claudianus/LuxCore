@@ -30,19 +30,46 @@ namespace slg {
 class BlackBodyTexture : public Texture {
 public:
 	BlackBodyTexture(const float temp, const bool normalize = false);
+	BlackBodyTexture(TextureConstRef tempTex, const float nominalTemp, const bool normalize);
 	virtual ~BlackBodyTexture() { }
 
 	virtual TextureType GetType() const { return BLACKBODY_TEX; }
-	virtual float GetFloatValue(const HitPoint &hitPoint) const { return rgb.Y(); }
-	virtual luxrays::Spectrum GetSpectrumValue(const HitPoint &hitPoint) const { return rgb; }
+	virtual float GetFloatValue(const HitPoint &hitPoint) const {
+		return EvalSpectrumValue(hitPoint).Y();
+	}
+	virtual luxrays::Spectrum EvalSpectrumValue(const HitPoint &hitPoint) const;
+	virtual luxrays::Spectrum EvalSpectralValue(const HitPoint &hitPoint,
+			const luxrays::PathWavelengths &sw, const bool emission) const;
 	virtual float Y() const { return rgb.Y(); }
 	virtual float Filter() const { return rgb.Filter(); }
 
+	virtual void AddReferencedTextures(std::unordered_set<const Texture *> &referencedTexs) const {
+		Texture::AddReferencedTextures(referencedTexs);
+		if (temperatureTex)
+			temperatureTex->AddReferencedTextures(referencedTexs);
+	}
+	virtual void AddReferencedImageMaps(std::unordered_set<const ImageMap *> &referencedImgMaps) const {
+		if (temperatureTex)
+			temperatureTex->AddReferencedImageMaps(referencedImgMaps);
+	}
+	virtual void UpdateTextureReferences(TextureConstRef oldTex, TextureRef newTex) {
+		if (temperatureTex == std::addressof(oldTex))
+			temperatureTex = std::addressof(newTex);
+	}
+
+	// Representative RGB at the nominal temperature (importance-sampling hint
+	// and the constant-temperature result).
 	const luxrays::Spectrum &GetRGB() const { return rgb; }
+	float GetTemperature() const { return temperature; }
+	bool GetNormalize() const { return normalize; }
+	// nullptr when the temperature is a compile-time constant.
+	const Texture *GetTemperatureTex() const { return temperatureTex; }
 
 	virtual luxrays::PropertiesUPtr ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const;
 
 private:
+	// Per-point temperature source; nullptr on the constant-temperature path.
+	const Texture *temperatureTex;
 	const float temperature;
 	const bool normalize;
 

@@ -30,7 +30,7 @@ float ColorDepthTexture::GetFloatValue(const HitPoint &hitPoint) const {
 	return logf(Clamp(GetKt().GetFloatValue(hitPoint), 1e-9f, 1.f)) / d;
 }
 
-Spectrum ColorDepthTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum ColorDepthTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return Ln(GetKt().GetSpectrumValue(hitPoint).Clamp(1e-9f, 1.f)) / d;
 }
 

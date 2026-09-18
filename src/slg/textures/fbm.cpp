@@ -33,7 +33,7 @@ float FBMTexture::GetFloatValue(const HitPoint &hitPoint) const {
 	return value;
 }
 
-Spectrum FBMTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum FBMTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return Spectrum(GetFloatValue(hitPoint));
 }
 

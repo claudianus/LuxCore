@@ -35,7 +35,7 @@ public:
 	virtual TextureType GetType() const { return CONST_FLOAT; }
 	virtual std::string GetSDLValue() const;
 	virtual float GetFloatValue(const HitPoint &hitPoint) const { return value; }
-	virtual luxrays::Spectrum GetSpectrumValue(const HitPoint &hitPoint) const { return luxrays::Spectrum(value); }
+	virtual luxrays::Spectrum EvalSpectrumValue(const HitPoint &hitPoint) const { return luxrays::Spectrum(value); }
 	virtual float Y() const { return value; }
 	virtual float Filter() const { return value; }
 	virtual luxrays::Normal Bump(const HitPoint &hitPoint, const float sampleDistance) const { return hitPoint.shadeN; }

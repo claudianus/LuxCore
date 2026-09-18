@@ -16,65 +16,81 @@
  * limitations under the License.                                          *
  ***************************************************************************/
 
-#ifndef _SLG_POWERTEX_H
-#define	_SLG_POWERTEX_H
+#ifndef _SLG_WHITENOISETEX_H
+#define	_SLG_WHITENOISETEX_H
 
 #include "slg/textures/texture.h"
 
 namespace slg {
 
 //------------------------------------------------------------------------------
-// Power texture
+// White noise texture
+//
+// Deterministic per-seed spatial white noise (Cycles "White Noise" node). The
+// input is a 3D seed (usually the shading position): each distinct seed maps
+// to an uncorrelated pseudo-random value in [0, 1). The same seed always maps
+// to the same value.
 //------------------------------------------------------------------------------
 
-class PowerTexture : public Texture {
+class WhiteNoiseTexture : public Texture {
 public:
-	PowerTexture(TextureRef base, TextureRef exponent) : base(base), exponent(exponent) { }
-	virtual ~PowerTexture() { }
+	WhiteNoiseTexture(TextureRef t, const u_int o) : tex(t), seedOffset(o) { }
+	virtual ~WhiteNoiseTexture() { }
 
-	virtual TextureType GetType() const { return POWER_TEX; }
+	virtual TextureType GetType() const { return WHITENOISE_TEX; }
 	virtual float GetFloatValue(const HitPoint &hitPoint) const;
 	virtual luxrays::Spectrum EvalSpectrumValue(const HitPoint &hitPoint) const;
-	virtual float Y() const {
-		return SafePow(GetBase().Y(), GetExponent().Y());
-	}
-	virtual float Filter() const {
-		return SafePow(GetBase().Filter(), GetExponent().Filter());
-	}
+	virtual float Y() const { return luxrays::Spectrum(.5f).Y(); }
+	virtual float Filter() const { return .5f; }
 
 	virtual void AddReferencedTextures(std::unordered_set<const Texture *>  &referencedTexs) const {
 		Texture::AddReferencedTextures(referencedTexs);
 
-		GetBase().AddReferencedTextures(referencedTexs);
-		GetExponent().AddReferencedTextures(referencedTexs);
+		GetTexture().AddReferencedTextures(referencedTexs);
 	}
 	virtual void AddReferencedImageMaps(std::unordered_set<const ImageMap * > &referencedImgMaps) const {
-		GetBase().AddReferencedImageMaps(referencedImgMaps);
-		GetExponent().AddReferencedImageMaps(referencedImgMaps);
+		GetTexture().AddReferencedImageMaps(referencedImgMaps);
 	}
 
 	virtual void UpdateTextureReferences(TextureRef oldTex, TextureRef newTex) {
-		updtex(base, oldTex, newTex);
-		updtex(exponent, oldTex, newTex);
+		updtex(tex, oldTex, newTex);
 	}
 
-	TextureConstRef GetBase() const { return base; }
-	TextureConstRef GetExponent() const { return exponent; }
+	TextureConstRef GetTexture() const { return tex; }
+	u_int GetSeedOffset() const { return seedOffset; }
 
 	virtual luxrays::PropertiesUPtr ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const;
 
-private:
-	std::reference_wrapper<Texture> base;
-	std::reference_wrapper<Texture> exponent;
-
-	inline float SafePow(const float base, const float exponent) const {
-		if (base < 0.f && exponent != static_cast<int>(exponent))
-			return 0.f;
-		return powf(base, exponent);
+	// Reinterpret a float's bit pattern as an integer. Deterministic for all
+	// float values (negatives, huge coords, inf) and bit-identical to the
+	// OpenCL as_uint(); arithmetic float->uint casts are undefined for
+	// negative inputs and diverge between CPU and GPU.
+	static u_int FloatBits(const float v) {
+		union { float f; u_int i; } b;
+		b.f = v;
+		return b.i;
 	}
+
+	// Spatial hash of a 3-component seed -> seed for the RNG. Bit-mixes the
+	// component bit patterns then applies an integer avalanche so nearby
+	// positions (correlated mantissa bits) still decorrelate. Shared by the
+	// CPU and OpenCL implementations.
+	static u_int SeedFromVector(const float x, const float y, const float z) {
+		u_int h = FloatBits(x) * 0x85ebca6bu ^ FloatBits(y) * 0xc2b2ae35u ^
+				FloatBits(z) * 0x27d4eb2fu;
+		h ^= h >> 16u; h *= 0x85ebca6bu;
+		h ^= h >> 13u; h *= 0xc2b2ae35u;
+		h ^= h >> 16u;
+		return h;
+	}
+
+private:
+	std::reference_wrapper<Texture> tex;
+
+	const u_int seedOffset;
 };
 
 }
 
-#endif	/* _SLG_POWERTEX_H */
+#endif	/* _SLG_WHITENOISETEX_H */
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

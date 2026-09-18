@@ -34,7 +34,7 @@ float WindyTexture::GetFloatValue(const HitPoint &hitPoint) const {
 	return fabsf(windStrength) * waveHeight;
 }
 
-Spectrum WindyTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum WindyTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return Spectrum(GetFloatValue(hitPoint));
 }
 

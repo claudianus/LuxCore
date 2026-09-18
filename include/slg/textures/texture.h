@@ -35,6 +35,7 @@
 #include "luxrays/core/geometry/point.h"
 #include "luxrays/core/geometry/normal.h"
 #include "luxrays/core/color/color.h"
+#include "luxrays/core/color/spectral.h"
 #include "luxrays/core/namedobject.h"
 #include "slg/imagemap/imagemap.h"
 #include "slg/imagemap/imagemapcache.h"
@@ -62,7 +63,7 @@ typedef enum {
 	POWER_TEX, LESS_THAN_TEX, GREATER_THAN_TEX, ROUNDING_TEX, MODULO_TEX, SHADING_NORMAL_TEX,
     POSITION_TEX, SPLIT_FLOAT3, MAKE_FLOAT3, BRIGHT_CONTRAST_TEX, HITPOINTVERTEXAOV,
 	HITPOINTTRIANGLEAOV, TRIPLANAR_TEX, RANDOM_TEX, BEVEL_TEX, DISTORT_TEX,
-	BOMBING_TEX, // 44 textures
+	BOMBING_TEX, WHITENOISE_TEX, // 45 textures
 	// Procedural textures
 	BLENDER_BLEND, BLENDER_CLOUDS, BLENDER_DISTORTED_NOISE, BLENDER_MAGIC, BLENDER_MARBLE,
 	BLENDER_MUSGRAVE, BLENDER_NOISE, BLENDER_STUCCI, BLENDER_WOOD,  BLENDER_VORONOI,
@@ -85,7 +86,27 @@ public:
 	virtual std::string GetSDLValue() const;
 
 	virtual float GetFloatValue(const HitPoint &hitPoint) const = 0;
-	virtual luxrays::Spectrum GetSpectrumValue(const HitPoint &hitPoint) const = 0;
+
+	// Public entry: when a spectral transport path is active (path.spectral
+	// enable + a PathWavelengths set on this thread), leaf RGB-producing
+	// textures are upsampled to the path wavelengths; combiner and data
+	// textures pass their (already spectral-binned or non-color) values
+	// through unchanged.
+	luxrays::Spectrum GetSpectrumValue(const HitPoint &hitPoint) const;
+	// Same, but leaf RGB values are upsampled with the illuminant basis
+	// (used by emission evaluation sites).
+	luxrays::Spectrum GetEmissionSpectrumValue(const HitPoint &hitPoint) const;
+
+	// Raw RGB evaluation (was GetSpectrumValue). Textures performing RGB-space
+	// math on their inputs (e.g. HSV) should call this on children.
+	virtual luxrays::Spectrum EvalSpectrumValue(const HitPoint &hitPoint) const = 0;
+	// Spectral evaluation. Default: leaf RGB -> Smits upsample at the path
+	// wavelengths, everything else passes the raw value through. Textures
+	// carrying a real SPD (blackbody, irregulardata, lamp spectra) override
+	// this to evaluate the true spectrum instead of an RGB upsample.
+	virtual luxrays::Spectrum EvalSpectralValue(const HitPoint &hitPoint,
+			const luxrays::PathWavelengths &sw, const bool emission) const;
+
 	virtual float Y() const = 0;
 	virtual float Filter() const = 0;
 

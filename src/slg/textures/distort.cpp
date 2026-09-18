@@ -36,7 +36,7 @@ void DistortTexture::GetTmpHitPoint(const HitPoint &hitPoint, HitPoint &tmpHitPo
 	tmpHitPoint.defaultUV.v += offset.y;
 }
 
-Spectrum DistortTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum DistortTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	HitPoint tmpHitPoint;
 	GetTmpHitPoint(hitPoint, tmpHitPoint);
 	
@@ -44,7 +44,7 @@ Spectrum DistortTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
 }
 
 float DistortTexture::GetFloatValue(const HitPoint &hitPoint) const {
-	return GetSpectrumValue(hitPoint).Y();
+	return EvalSpectrumValue(hitPoint).Y();
 }
 
 PropertiesUPtr DistortTexture::ToProperties(const ImageMapCache &imgMapCache, const bool useRealFileName) const {

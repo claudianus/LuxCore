@@ -30,7 +30,7 @@ float ClampTexture::GetFloatValue(const HitPoint &hitPoint) const {
 	return Clamp(GetTexture().GetFloatValue(hitPoint), minVal, maxVal);
 }
 
-Spectrum ClampTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum ClampTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return GetTexture().GetSpectrumValue(hitPoint).Clamp(minVal, maxVal);
 }
 

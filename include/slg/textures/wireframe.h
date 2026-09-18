@@ -36,7 +36,7 @@ public:
 
 	virtual TextureType GetType() const { return WIREFRAME_TEX; }
 	virtual float GetFloatValue(const HitPoint &hitPoint) const;
-	virtual luxrays::Spectrum GetSpectrumValue(const HitPoint &hitPoint) const;
+	virtual luxrays::Spectrum EvalSpectrumValue(const HitPoint &hitPoint) const;
 	virtual float Y() const {
 		return (GetBorderTex().Y() + GetInsideTex().Y()) * .5f;
 	}

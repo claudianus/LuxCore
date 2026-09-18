@@ -39,7 +39,7 @@ float BilerpTexture::GetFloatValue(const HitPoint &hitPoint) const
 	);
 }
 
-Spectrum BilerpTexture::GetSpectrumValue(const HitPoint &hitPoint) const
+Spectrum BilerpTexture::EvalSpectrumValue(const HitPoint &hitPoint) const
 {
 	UV uv = hitPoint.GetUV(0);
 	uv.u -= Floor2Int(uv.u);

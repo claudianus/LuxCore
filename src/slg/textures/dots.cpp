@@ -52,7 +52,7 @@ float DotsTexture::GetFloatValue(const HitPoint &hitPoint) const {
 		GetOutsideTex().GetFloatValue(hitPoint);
 }
 
-Spectrum DotsTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum DotsTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return Evaluate(hitPoint) ? GetInsideTex().GetSpectrumValue(hitPoint) :
 		GetOutsideTex().GetSpectrumValue(hitPoint);
 }

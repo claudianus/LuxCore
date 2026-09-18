@@ -27,11 +27,16 @@ using namespace slg;
 //------------------------------------------------------------------------------
 
 float HsvTexture::GetFloatValue(const HitPoint &hitPoint) const {
-	return GetSpectrumValue(hitPoint).Y();
+	return EvalSpectrumValue(hitPoint).Y();
 }
 
-Spectrum HsvTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
-	const Spectrum colorHitpoint = GetTexture().GetSpectrumValue(hitPoint);
+Spectrum HsvTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
+	// HSV math operates in RGB space: evaluate the color subtree raw
+	Spectrum colorHitpoint;
+	{
+		const Spectral::ScopePause pause;
+		colorHitpoint = GetTexture().GetSpectrumValue(hitPoint);
+	}
 	const float hueHitpoint = GetHue().GetFloatValue(hitPoint);
 	const float satHitpoint = GetSaturation().GetFloatValue(hitPoint);
 	const float valHitpoint = GetValue().GetFloatValue(hitPoint);

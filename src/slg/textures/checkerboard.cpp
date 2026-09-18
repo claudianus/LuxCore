@@ -35,7 +35,7 @@ float CheckerBoard2DTexture::GetFloatValue(const HitPoint &hitPoint) const {
 		return GetTexture2().GetFloatValue(hitPoint);
 }
 
-Spectrum CheckerBoard2DTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum CheckerBoard2DTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	const UV uv = mapping->Map(hitPoint);
 	if ((Floor2Int(uv.u) + Floor2Int(uv.v)) % 2 == 0)
 		return GetTexture1().GetSpectrumValue(hitPoint);
@@ -64,7 +64,7 @@ float CheckerBoard3DTexture::GetFloatValue(const HitPoint &hitPoint) const {
 		return GetTexture2().GetFloatValue(hitPoint);
 }
 
-Spectrum CheckerBoard3DTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum CheckerBoard3DTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	const Point p = mapping->Map(hitPoint);
 	// The +DEFAULT_EPSILON_STATIC is there as workaround for planes placed exactly on 0.0
 	if ((Floor2Int(p.x + DEFAULT_EPSILON_STATIC) + Floor2Int(p.y + DEFAULT_EPSILON_STATIC) + Floor2Int(p.z + DEFAULT_EPSILON_STATIC)) % 2 == 0)

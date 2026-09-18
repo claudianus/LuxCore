@@ -35,7 +35,7 @@ public:
 
 	virtual TextureType GetType() const { return CLAMP_TEX; }
 	virtual float GetFloatValue(const HitPoint &hitPoint) const;
-	virtual luxrays::Spectrum GetSpectrumValue(const HitPoint &hitPoint) const;
+	virtual luxrays::Spectrum EvalSpectrumValue(const HitPoint &hitPoint) const;
 	virtual float Y() const { return luxrays::Clamp(GetTexture().Y(), minVal, maxVal); } // This can be not correct
 	virtual float Filter() const { return luxrays::Clamp(GetTexture().Filter(), minVal, maxVal); } // This can be not correct
 

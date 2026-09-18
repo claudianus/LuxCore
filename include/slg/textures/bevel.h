@@ -34,7 +34,7 @@ public:
 
 	virtual TextureType GetType() const { return BEVEL_TEX; }
 	virtual float GetFloatValue(const HitPoint &hitPoint) const { return 0.f; }
-	virtual luxrays::Spectrum GetSpectrumValue(const HitPoint &hitPoint) const { return luxrays::Spectrum(); }
+	virtual luxrays::Spectrum EvalSpectrumValue(const HitPoint &hitPoint) const { return luxrays::Spectrum(); }
 	virtual float Y() const { return 0.f; }
 	virtual float Filter() const { return 0.f; }
 

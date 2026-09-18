@@ -192,7 +192,8 @@ OPENCL_FORCE_NOT_INLINE void ImageMapTexture_EvalOp(
 		__global float *evalStack,
 		uint *evalStackOffset,
 		__global const HitPoint *hitPoint,
-		const float sampleDistance
+		const float sampleDistance,
+		const uint spectralRawDepth
 		TEXTURES_PARAM_DECL) {
 	switch (evalType) {
 		case EVAL_FLOAT: {
@@ -202,7 +203,7 @@ OPENCL_FORCE_NOT_INLINE void ImageMapTexture_EvalOp(
 		}
 		case EVAL_SPECTRUM: {
 			const float3 eval = ImageMapTexture_ConstEvaluateSpectrum(texture, hitPoint TEXTURES_PARAM);
-			EvalStack_PushFloat3(eval);
+			EvalStack_PushFloat3(SLG_SPECTRAL_LEAF_EVAL_DEPTH(eval, spectralRawDepth));
 			break;
 		}
 		case EVAL_BUMP: {

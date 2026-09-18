@@ -30,7 +30,7 @@ float FresnelColorTexture::GetFloatValue(const HitPoint &hitPoint) const {
 	return GetKr().GetFloatValue(hitPoint);
 }
 
-Spectrum FresnelColorTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum FresnelColorTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return GetKr().GetSpectrumValue(hitPoint);
 }
 

@@ -70,7 +70,7 @@ float CloudTexture::GetFloatValue(const HitPoint &hitPoint) const {
 	return min(finalValue, 1.f);
 }
 
-Spectrum CloudTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum CloudTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return Spectrum(GetFloatValue(hitPoint));
 }
 

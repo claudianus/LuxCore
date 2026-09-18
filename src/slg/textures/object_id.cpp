@@ -30,7 +30,7 @@ float ObjectIDTexture::GetFloatValue(const HitPoint &hitPoint) const {
 	return static_cast<float>(hitPoint.objectID);
 }
 
-Spectrum ObjectIDTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum ObjectIDTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return Spectrum(hitPoint.objectID);
 }
 
@@ -48,10 +48,10 @@ PropertiesUPtr ObjectIDTexture::ToProperties(const ImageMapCache &imgMapCache, c
 //------------------------------------------------------------------------------
 
 float ObjectIDColorTexture::GetFloatValue(const HitPoint &hitPoint) const {
-	return GetSpectrumValue(hitPoint).Y();
+	return EvalSpectrumValue(hitPoint).Y();
 }
 
-Spectrum ObjectIDColorTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum ObjectIDColorTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	const u_int objID = hitPoint.objectID;
 	return Spectrum((objID & 0x0000ffu) * ( 1.f / 255.f),
 	                ((objID & 0x00ff00u) >> 8) * ( 1.f / 255.f),
@@ -75,7 +75,7 @@ float ObjectIDNormalizedTexture::GetFloatValue(const HitPoint &hitPoint) const {
 	return static_cast<float>(hitPoint.objectID) * (1.f / 0xffffffffu);
 }
 
-Spectrum ObjectIDNormalizedTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum ObjectIDNormalizedTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return Spectrum(GetFloatValue(hitPoint));
 }
 

@@ -30,7 +30,7 @@ float AbsTexture::GetFloatValue(const HitPoint &hitPoint) const {
 	return fabsf(GetTexture().GetFloatValue(hitPoint));
 }
 
-Spectrum AbsTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum AbsTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return GetTexture().GetSpectrumValue(hitPoint).Abs();
 }
 

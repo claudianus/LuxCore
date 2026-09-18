@@ -27,10 +27,11 @@ using namespace slg;
 //------------------------------------------------------------------------------
 
 float DotProductTexture::GetFloatValue(const HitPoint &hitPoint) const {
+	const Spectral::ScopePause pause;
 	return Dot(GetTexture1().GetSpectrumValue(hitPoint), GetTexture2().GetSpectrumValue(hitPoint));
 }
 
-Spectrum DotProductTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum DotProductTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return Spectrum(GetFloatValue(hitPoint));
 }
 

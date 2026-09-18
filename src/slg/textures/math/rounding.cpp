@@ -30,7 +30,7 @@ float RoundingTexture::GetFloatValue(const HitPoint &hitPoint) const {
     return round(GetTexture().GetFloatValue(hitPoint), GetIncrement().GetFloatValue(hitPoint));
 }
 
-Spectrum RoundingTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum RoundingTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
     return Spectrum(GetFloatValue(hitPoint));
 }
 

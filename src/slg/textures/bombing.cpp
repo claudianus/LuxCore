@@ -40,10 +40,10 @@ float BombingTexture::Filter() const {
 }
 
 float BombingTexture::GetFloatValue(const HitPoint &hitPoint) const {
-	return GetSpectrumValue(hitPoint).Y();
+	return EvalSpectrumValue(hitPoint).Y();
 }
 
-Spectrum BombingTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum BombingTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	const Spectrum backgroundValue = GetBackgroundTex().GetSpectrumValue(hitPoint);
 
 	const UV uv = mapping->Map(hitPoint);

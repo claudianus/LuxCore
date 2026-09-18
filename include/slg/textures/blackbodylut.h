@@ -1,5 +1,3 @@
-#line 2 "texture_blackbody_funcs.cl"
-
 /***************************************************************************
  * Copyright 1998-2020 by authors (see AUTHORS.txt)                        *
  *                                                                         *
@@ -18,19 +16,21 @@
  * limitations under the License.                                          *
  ***************************************************************************/
 
-//------------------------------------------------------------------------------
-// BlackBody texture
-//
-// Temperature -> normalized RGB white point LUT, generated from
+#ifndef _SLG_BLACKBODYLUT_H
+#define	_SLG_BLACKBODYLUT_H
+
+// Temperature (K) -> normalized RGB white point, generated from
 // luxrays::TemperatureToWhitePoint(t, normalize=true) over [800, 12000] K,
-// N=160. Keep in sync with kBlackBodyRgbLut in slg/textures/blackbodylut.h.
-//------------------------------------------------------------------------------
+// N=160 entries. Stored normalized (divide by 89159.6); multiply by
+// 89159.6f to recover the raw physical value.
+// Keep in sync with kBlackBodyRgbLut in texture_blackbody_funcs.cl.
 
 #define SLG_BLACKBODY_LUT_N    160
 #define SLG_BLACKBODY_LUT_TMIN 800.f
 #define SLG_BLACKBODY_LUT_TMAX 12000.f
+#define SLG_BLACKBODY_RAW_SCALE 89159.6f
 
-__constant float kBlackBodyRgbLut[SLG_BLACKBODY_LUT_N * 3] = {
+static const float kBlackBodyRgbLut[SLG_BLACKBODY_LUT_N * 3] = {
 	0.0473290f, 0.0000000f, 0.0000000f,
 	0.0649625f, 0.0000001f, 0.0000001f,
 	0.0864053f, 0.0000001f, 0.0000001f,
@@ -193,26 +193,5 @@ __constant float kBlackBodyRgbLut[SLG_BLACKBODY_LUT_N * 3] = {
 	0.2860251f, 0.3566172f, 0.5654878f,
 };
 
-OPENCL_FORCE_INLINE float3 BlackBody_LutRGB(const float temperature,
-		const float rgbScale) {
-	const float t = clamp(temperature, SLG_BLACKBODY_LUT_TMIN, SLG_BLACKBODY_LUT_TMAX);
-	const float x = (t - SLG_BLACKBODY_LUT_TMIN) *
-			(SLG_BLACKBODY_LUT_N - 1) / (SLG_BLACKBODY_LUT_TMAX - SLG_BLACKBODY_LUT_TMIN);
-	const int i = min((int)x, SLG_BLACKBODY_LUT_N - 2);
-	const float f = x - i;
-
-	const float3 a = (float3)(kBlackBodyRgbLut[i * 3],
-			kBlackBodyRgbLut[i * 3 + 1], kBlackBodyRgbLut[i * 3 + 2]);
-	const float3 b = (float3)(kBlackBodyRgbLut[(i + 1) * 3],
-			kBlackBodyRgbLut[(i + 1) * 3 + 1], kBlackBodyRgbLut[(i + 1) * 3 + 2]);
-	return mix(a, b, f) * rgbScale;
-}
-
-OPENCL_FORCE_INLINE float BlackBodyTexture_ConstEvaluateFloat(const float3 rgb) {
-	return Spectrum_Y(rgb);
-}
-
-OPENCL_FORCE_INLINE float3 BlackBodyTexture_ConstEvaluateSpectrum(const float3 rgb) {
-	return rgb;
-}
+#endif	/* _SLG_BLACKBODYLUT_H */
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

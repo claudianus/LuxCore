@@ -41,7 +41,7 @@ public:
 
 	virtual TextureType GetType() const { return BRICK; }
 	virtual float GetFloatValue(const HitPoint &hitPoint) const;
-	virtual luxrays::Spectrum GetSpectrumValue(const HitPoint &hitPoint) const;
+	virtual luxrays::Spectrum EvalSpectrumValue(const HitPoint &hitPoint) const;
 	virtual float Y() const {
 		const float m = powf(luxrays::Clamp(1.f - mortarsize, 0.f, 1.f), 3);
 		return luxrays::Lerp(m, GetTexture2().Y(), GetTexture1().Y());

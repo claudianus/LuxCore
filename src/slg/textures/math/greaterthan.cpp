@@ -30,7 +30,7 @@ float GreaterThanTexture::GetFloatValue(const HitPoint &hitPoint) const {
 	return (GetTexture1().GetFloatValue(hitPoint) > GetTexture2().GetFloatValue(hitPoint)) ? 1.f : 0.f;
 }
 
-Spectrum GreaterThanTexture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum GreaterThanTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return Spectrum(GetFloatValue(hitPoint));
 }
 

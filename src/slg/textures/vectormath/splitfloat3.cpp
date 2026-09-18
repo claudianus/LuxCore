@@ -27,10 +27,11 @@ using namespace slg;
 //------------------------------------------------------------------------------
 
 float SplitFloat3Texture::GetFloatValue(const HitPoint &hitPoint) const {
+	const Spectral::ScopePause pause;
 	return GetTexture().GetSpectrumValue(hitPoint).c[channel];
 }
 
-Spectrum SplitFloat3Texture::GetSpectrumValue(const HitPoint &hitPoint) const {
+Spectrum SplitFloat3Texture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	return Spectrum(GetFloatValue(hitPoint));
 }
 
