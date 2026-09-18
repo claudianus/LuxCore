@@ -56,5 +56,13 @@ typedef struct {
 	int isHoldout;
 
 	int firstPathVertex, lastPathVertex;
+
+	// Hero-wavelength spectral state (SLG_SPECTRAL builds): wavelengths in
+	// nm for the 3 bins packed into Spectrum channels, plus the packed
+	// alive-mask/hero/emission flag (see SLG_SW_* in spectral_funcs.cl).
+	// Carried here so every funnel that sees a SampleResult (emission and
+	// film splat included) can reach the path wavelengths.
+	float spectralW[3];
+	unsigned int spectralHeroAlive;
 } SampleResult;
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

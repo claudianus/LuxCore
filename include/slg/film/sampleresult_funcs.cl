@@ -60,6 +60,13 @@ OPENCL_FORCE_INLINE void SampleResult_Init(__constant const Film* restrict film,
 	// sampleResult->lastPathVertex can not be really initialized here without knowing
 	// the max. path depth.
 	sampleResult->lastPathVertex = true;
+
+	// Neutral spectral state; GenerateEyePath() overwrites it with the
+	// drawn wavelengths on SLG_SPECTRAL builds.
+	sampleResult->spectralW[0] = SLG_SPECTRAL_START;
+	sampleResult->spectralW[1] = SLG_SPECTRAL_START + SLG_SPECTRAL_BIN_WIDTH;
+	sampleResult->spectralW[2] = SLG_SPECTRAL_START + 2.f * SLG_SPECTRAL_BIN_WIDTH;
+	sampleResult->spectralHeroAlive = SLG_SW_DEFAULT;
 }
 
 OPENCL_FORCE_INLINE void SampleResult_AddEmission(__constant const Film* restrict film,
@@ -148,6 +155,44 @@ OPENCL_FORCE_INLINE float3 SampleResult_GetSpectrum(__constant const Film* restr
 
 	return c;
 }
+
+#if defined(SLG_SPECTRAL)
+// Project every spectral color field of a SampleResult (wavelength bins)
+// back to film RGB under the CIE matching functions -- the device mirror of
+// CPU ProjectSampleResultToRGB(). Called once at film splat so all channels
+// (radiance groups, light groups, denoiser inputs) receive RGB.
+OPENCL_FORCE_INLINE void SampleResult_ProjectSpectralToRGB(
+		__global SampleResult *sampleResult) {
+	for (uint i = 0; i < FILM_MAX_RADIANCE_GROUP_COUNT; ++i)
+		VSTORE3F(Spectral_ProjectToRGB(VLOAD3F(sampleResult->radiancePerPixelNormalized[i].c),
+				sampleResult->spectralW, sampleResult->spectralHeroAlive),
+				sampleResult->radiancePerPixelNormalized[i].c);
+#define SLG_PROJECT_FIELD(f) \
+		VSTORE3F(Spectral_ProjectToRGB(VLOAD3F(sampleResult->f.c), \
+				sampleResult->spectralW, sampleResult->spectralHeroAlive), \
+				sampleResult->f.c)
+	SLG_PROJECT_FIELD(directDiffuse);
+	SLG_PROJECT_FIELD(directDiffuseReflect);
+	SLG_PROJECT_FIELD(directDiffuseTransmit);
+	SLG_PROJECT_FIELD(directGlossy);
+	SLG_PROJECT_FIELD(directGlossyReflect);
+	SLG_PROJECT_FIELD(directGlossyTransmit);
+	SLG_PROJECT_FIELD(emission);
+	SLG_PROJECT_FIELD(indirectDiffuse);
+	SLG_PROJECT_FIELD(indirectDiffuseReflect);
+	SLG_PROJECT_FIELD(indirectDiffuseTransmit);
+	SLG_PROJECT_FIELD(indirectGlossy);
+	SLG_PROJECT_FIELD(indirectGlossyReflect);
+	SLG_PROJECT_FIELD(indirectGlossyTransmit);
+	SLG_PROJECT_FIELD(indirectSpecular);
+	SLG_PROJECT_FIELD(indirectSpecularReflect);
+	SLG_PROJECT_FIELD(indirectSpecularTransmit);
+	SLG_PROJECT_FIELD(irradiance);
+	SLG_PROJECT_FIELD(irradiancePathThroughput);
+	SLG_PROJECT_FIELD(albedo);
+#undef SLG_PROJECT_FIELD
+}
+#endif
 
 OPENCL_FORCE_INLINE float SampleResult_GetRadianceY(__constant const Film* restrict film,
 		__global SampleResult *sampleResult) {

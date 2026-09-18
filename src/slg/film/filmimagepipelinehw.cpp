@@ -40,6 +40,8 @@ void Film::SetUpHW() {
 	hwEnable = true;
 
 	hwDeviceIndex = -1;
+	hwDeviceName = "";
+	hwDeviceType = DEVICE_TYPE_ALL_HARDWARE;
 
 	dataSet = nullptr;
 	hardwareDevice = nullptr;
@@ -75,27 +77,57 @@ void Film::CreateHWContext() {
 
 	DeviceDescriptionPtr selectedDeviceDesc = nullptr;
 	if (hwEnable) {
-		if ((hwDeviceIndex >= 0) && (hwDeviceIndex < (int)descs.size())) {
+		if (!hwDeviceName.empty()) {
+			// The render engine told me the device it is using: run the
+			// film image pipeline on the same hardware. Name+type matching
+			// is used because this Context enumeration is independent from
+			// the engine one and the same GPU can be enumerated with the
+			// same name by different backends (OpenCL and Metal on Apple
+			// silicon both report "Apple M5 Pro")
+			for (DeviceDescriptionRef desc : descs) {
+				if ((desc.GetName() == hwDeviceName) &&
+						(desc.GetType() == hwDeviceType)) {
+					selectedDeviceDesc = std::addressof(desc);
+					break;
+				}
+			}
+
+			if (!selectedDeviceDesc)
+				SLG_LOG("WARNING: unable to find the film hardware device: " << hwDeviceName <<
+						" (Type: " << DeviceDescription::GetDeviceType(hwDeviceType) << ")");
+		}
+
+		if (!selectedDeviceDesc &&
+				(hwDeviceIndex >= 0) && (hwDeviceIndex < (int)descs.size())) {
 			// I have to use specific device
 			DeviceDescriptionRef selectedDeviceDescRef = descs[hwDeviceIndex];
-			selectedDeviceDesc = std::addressof(selectedDeviceDescRef);
-		} else if (descs.size() > 0) {
-			// Look for a GPU to use
-			for (DeviceDescriptionRef desc : descs) {
+			if (selectedDeviceDescRef.GetType() & DEVICE_TYPE_ALL_HARDWARE)
+				selectedDeviceDesc = std::addressof(selectedDeviceDescRef);
+			else
+				SLG_LOG("WARNING: ignoring film.hw.device index " << hwDeviceIndex <<
+						" (not a hardware device)");
+		}
 
+		if (!selectedDeviceDesc && descs.size() > 0) {
+			// Look for a GPU to use. Priority: CUDA > Metal > OpenCL
+			DeviceDescriptionPtr metalDeviceDesc = nullptr;
+			DeviceDescriptionPtr oclDeviceDesc = nullptr;
+
+			for (DeviceDescriptionRef desc : descs) {
 				if (desc.GetType() == DEVICE_TYPE_CUDA_GPU) {
 					selectedDeviceDesc = std::addressof(desc);
 					break;
-
-				}
-				if (desc.GetType() == DEVICE_TYPE_OPENCL_GPU) {
-					selectedDeviceDesc = std::addressof(desc);
-					// I continue to scan other devices to check if there is a
-					// CUDA one. CUDA is preferred over OpenCL if available.
+				} else if (desc.GetType() == DEVICE_TYPE_METAL_GPU) {
+					if (!metalDeviceDesc)
+						metalDeviceDesc = std::addressof(desc);
+				} else if (desc.GetType() == DEVICE_TYPE_OPENCL_GPU) {
+					if (!oclDeviceDesc)
+						oclDeviceDesc = std::addressof(desc);
 				}
 			}
-		} else {
-			// No hardware device device available
+
+			if (!selectedDeviceDesc)
+				selectedDeviceDesc = metalDeviceDesc ? metalDeviceDesc : oclDeviceDesc;
 		}
 	}
 

@@ -16,6 +16,7 @@
  * limitations under the License.                                          *
  ***************************************************************************/
 
+#include <atomic>
 #include <unordered_set>
 
 #include "luxrays/utils/serializationutils.h"
@@ -134,11 +135,15 @@ void ImagePipeline::Apply(Film &film, const u_int index) {
 	//const double t1 = WallClockTime();
 
 	bool imageInCPURam = true;
+	bool hasCPUOnlyPlugin = false;
 	for(ImagePipelinePlugin *plugin: pipeline) {
 		//const double p1 = WallClockTime();
 
 		const bool useHWApply = film.hwEnable && film.hardwareDevice &&
 				plugin->CanUseHW();
+
+		if (!plugin->CanUseHW())
+			hasCPUOnlyPlugin = true;
 
 		// Check if it is a valid imagepipeline
 		if (!useHWApply && !plugin->CanUseNative())
@@ -175,7 +180,15 @@ void ImagePipeline::Apply(Film &film, const u_int index) {
 		//SLG_LOG("ImagePipeline plugin time: " << int((p2 - p1) * 1000.0) << "ms");
 	}
 
-	if (film.hwEnable && film.hardwareDevice && canUseHW) {
+	if (film.hwEnable && film.hardwareDevice && canUseHW && hasCPUOnlyPlugin) {
+		// One-shot per process hint: with a mix of hardware-accelerated and
+		// CPU-only plugins, the output buffer ping-pongs between CPU and
+		// device memory (see the transfers in the loop above).
+		static std::atomic<bool> warnedOnce(false);
+		bool expected = false;
+		if (warnedOnce.compare_exchange_strong(expected, true))
+			SLG_LOG("ImagePipeline: hardware execution is enabled but the pipeline mixes hardware-accelerated and CPU-only plugins; the output buffer ping-pongs between CPU and device memory for every CPU-only plugin. For maximum throughput, avoid mixing them in the same pipeline.");
+
 		if (!imageInCPURam)
 			film.ReadHWBuffer_IMAGEPIPELINE(index);
 

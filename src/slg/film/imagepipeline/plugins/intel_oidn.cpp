@@ -73,7 +73,17 @@ void IntelOIDN::FilterImage(const string &imageName,
 		const float *albedoBuffer, const float *normalBuffer,
 		const u_int width, const u_int height, const bool cleanAux) const {
 
+#if defined(__APPLE__)
+    // The macOS build of OIDN ships with a Metal backend. Use the GPU when
+    // available, and fall back to CPU otherwise.
+    lux::oidn::DeviceRef device = lux::oidn::newDevice(lux::oidn::DeviceType::Metal);
+    const char* metalError;
+    if (device.getError(metalError) != lux::oidn::Error::None) {
+        device = lux::oidn::newDevice(lux::oidn::DeviceType::CPU);
+    }
+#else
     lux::oidn::DeviceRef device = lux::oidn::newDevice(lux::oidn::DeviceType::CPU);
+#endif
 
     const char* errorMessage2;
 

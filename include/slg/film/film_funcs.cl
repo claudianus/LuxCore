@@ -312,6 +312,10 @@ void Film_AddSample(
 		const uint x, const uint y,
 		__global SampleResult *sampleResult, const float weight
 		FILM_PARAM_DECL) {
+#if defined(SLG_SPECTRAL)
+	// Wavelength-bin channels -> film RGB (CPU ProjectSampleResultToRGB)
+	SampleResult_ProjectSpectralToRGB(sampleResult);
+#endif
 	if (film->bcdDenoiserEnable) {
 		// Add the sample to film denoiser sample accumulator
 		FilmDenoiser_AddSample(film,

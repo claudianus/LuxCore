@@ -463,6 +463,14 @@ public:
 	// (Optional) LuxRays HardwareDevice context
 	bool hwEnable;
 	int hwDeviceIndex;
+	// Name and type of the hardware device to use (set by the render engine
+	// to run the film image pipeline on the same device used for rendering).
+	// They have precedence over hwDeviceIndex. The type is required because
+	// the same GPU can be enumerated with the same name by different
+	// backends (i.e. OpenCL and Metal on Apple silicon).
+	// Empty name: not set.
+	std::string hwDeviceName;
+	luxrays::DeviceType hwDeviceType;
 
 	luxrays::ContextUPtr ctx;
 	luxrays::DataSetSPtr dataSet;
