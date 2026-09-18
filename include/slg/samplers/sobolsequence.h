@@ -41,11 +41,27 @@ public:
 	u_int rngPass;
 	float rng0, rng1;
 
+	// Blue-noise dithered sampling (Heitz et al. 2019): when enabled, each
+	// dimension of each pixel is randomized with a hashed digital shift plus
+	// a hashed Cranley-Patterson offset. The seed is constant per pixel
+	// (across passes) so a pixel keeps its own stratified Sobol prefix while
+	// neighboring pixels use decorrelated dithers.
+	void SetBlueNoiseSeed(const u_int seed) {
+		blueNoiseSeed = seed;
+		blueNoiseEnable = true;
+	}
+	void DisableBlueNoise() { blueNoiseEnable = false; }
+
+	// murmur3 32-bit finalizer (must match the GPU kernel version)
+	static u_int BlueNoiseHash(u_int x);
+
 	static void GenerateDirectionVectors(u_int *vectors, const u_int dimensions);
 private:
 	u_int SobolDimension(const u_int index, const u_int dimension) const;
 
 	u_int *directions;
+	bool blueNoiseEnable;
+	u_int blueNoiseSeed;
 };
 
 }

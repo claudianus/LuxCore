@@ -37,16 +37,39 @@ OPENCL_FORCE_INLINE uint SobolSequence_SobolDimension(
 	return result;
 }
 
+OPENCL_FORCE_INLINE uint SobolSequence_BlueNoiseHash(uint x) {
+	// murmur3 32-bit finalizer (must match the CPU version)
+	x ^= x >> 16;
+	x *= 0x7feb352du;
+	x ^= x >> 15;
+	x *= 0x846ca68bu;
+	x ^= x >> 16;
+	return x;
+}
+
 OPENCL_FORCE_INLINE float SobolSequence_GetSample(
 		__global const uint* restrict sobolDirections,
 		const uint pass, const uint rngPass, const float rng0, const float rng1,
-		const uint index) {
-	// I scramble pass too in order avoid correlations visible with LIGHTCPU and PATHCPU
-	const uint iResult = SobolSequence_SobolDimension(sobolDirections, pass + rngPass, index);
-	const float fResult = iResult * (1.f / 0xffffffffu);
+		const uint index, const bool blueNoiseEnable) {
+	uint iResult;
+	float shift;
 
-	// Cranley-Patterson rotation to reduce visible regular patterns
-	const float shift = (index & 1) ? rng0 : rng1;
+	if (blueNoiseEnable) {
+		// Blue-noise dithered sampling (Heitz et al. 2019): per-pixel
+		// constant, per-dimension hashed digital shift + Cranley-Patterson
+		// offset (must match the CPU version)
+		const uint dimSeed = SobolSequence_BlueNoiseHash(rngPass ^ (index * 0x9e3779b9u + 0x85ebca6bu));
+		iResult = SobolSequence_SobolDimension(sobolDirections, pass, index) ^ dimSeed;
+		shift = SobolSequence_BlueNoiseHash(dimSeed ^ 0xc2b2ae35u) * (1.f / 4294967296.f);
+	} else {
+		// I scramble pass too in order avoid correlations visible with LIGHTCPU and PATHCPU
+		iResult = SobolSequence_SobolDimension(sobolDirections, pass + rngPass, index);
+
+		// Cranley-Patterson rotation to reduce visible regular patterns
+		shift = (index & 1) ? rng0 : rng1;
+	}
+
+	const float fResult = iResult * (1.f / 0xffffffffu);
 	const float val = fResult + shift;
 
 	return val - floor(val);
@@ -95,7 +118,10 @@ OPENCL_FORCE_INLINE float SobolSampler_GetSample(
 			__global SobolSample *samples = (__global SobolSample *)samplesBuff;
 			__global SobolSample *sample = &samples[gid];
 
-			return SobolSequence_GetSample(sobolDirections, sample->pass, sample->rngPass, sample->rng0, sample->rng1, index);	
+			__constant const Sampler *sampler = &taskConfig->sampler;
+
+			return SobolSequence_GetSample(sobolDirections, sample->pass, sample->rngPass, sample->rng0, sample->rng1, index,
+					sampler->sobol.bluenoiseEnable != 0u);
 		}
 	}
 }
@@ -252,16 +278,26 @@ OPENCL_FORCE_INLINE void SobolSampler_InitNewSample(
 
 		// Initialize rng0 and rng1
 
-		// Limit the number of pass skipped
-		sample->rngPass = Rnd_UintValue(&rngGeneratorSeed);
-		sample->rng0 = Rnd_FloatValue(&rngGeneratorSeed);
-		sample->rng1 = Rnd_FloatValue(&rngGeneratorSeed);
+		if (sampler->sobol.bluenoiseEnable != 0u) {
+			// Blue-noise dithered sampling (Heitz et al. 2019): the dither
+			// seed is constant per pixel (across passes); the per-dimension
+			// shifts are derived inside SobolSequence_GetSample()
+			sample->rngPass = SobolSequence_BlueNoiseHash(pixelX + pixelY * 0x9e3779b9u) ^ samplerSharedData->seedBase;
+			sample->rng0 = 0.f;
+			sample->rng1 = 0.f;
+		} else {
+			// Limit the number of pass skipped
+			sample->rngPass = Rnd_UintValue(&rngGeneratorSeed);
+			sample->rng0 = Rnd_FloatValue(&rngGeneratorSeed);
+			sample->rng1 = Rnd_FloatValue(&rngGeneratorSeed);
+		}
 
 		// Initialize IDX_SCREEN_X and IDX_SCREEN_Y sample
 
 		__global const uint* restrict sobolDirections = SobolSampler_GetSobolDirectionsPtr(samplerSharedData);
-		samplesData[IDX_SCREEN_X] = pixelX + SobolSequence_GetSample(sobolDirections, sample->pass, sample->rngPass, sample->rng0, sample->rng1, IDX_SCREEN_X);
-		samplesData[IDX_SCREEN_Y] = pixelY + SobolSequence_GetSample(sobolDirections, sample->pass, sample->rngPass, sample->rng0, sample->rng1, IDX_SCREEN_Y);
+		const bool blueNoiseEnable = (sampler->sobol.bluenoiseEnable != 0u);
+		samplesData[IDX_SCREEN_X] = pixelX + SobolSequence_GetSample(sobolDirections, sample->pass, sample->rngPass, sample->rng0, sample->rng1, IDX_SCREEN_X, blueNoiseEnable);
+		samplesData[IDX_SCREEN_Y] = pixelY + SobolSequence_GetSample(sobolDirections, sample->pass, sample->rngPass, sample->rng0, sample->rng1, IDX_SCREEN_Y, blueNoiseEnable);
 		break;
 	}
 	

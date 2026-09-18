@@ -19,6 +19,7 @@
 #ifndef _SLG_SAMPLER_H
 #define	_SLG_SAMPLER_H
 
+#include <atomic>
 #include <string>
 #include <vector>
 
@@ -66,7 +67,7 @@ public:
 //------------------------------------------------------------------------------
 
 typedef enum {
-	RANDOM, METROPOLIS, SOBOL, RTPATHCPUSAMPLER, TILEPATHSAMPLER,
+	RANDOM, METROPOLIS, SOBOL, RTPATHCPUSAMPLER, TILEPATHSAMPLER, PMJ02SAMPLER,
 	SAMPLER_TYPE_COUNT
 } SamplerType;
 
@@ -102,6 +103,16 @@ public:
 	// index 0 and 1 are always image X and image Y
 	virtual float GetSample(const u_int index) = 0;
 	virtual void NextSample(const std::vector<SampleResult> &sampleResults) = 0;
+
+	// Per-sample unique counter for path guiding (P1-3 M1): the guide
+	// bin pick must not reuse a sampler dimension that shares a
+	// Cranley-Patterson shift with the jitter dims (correlated triple =
+	// biased pdf). Samplers with a semantic pass override this; the
+	// default is a unique-per-call counter (unique values, racy
+	// assignment across threads, still uniform and shift-independent).
+	virtual u_int GetPass() const {
+		return passCounter.fetch_add(1u, std::memory_order_relaxed);
+	}
 
 	// Transform the current object in Properties
 	virtual luxrays::PropertiesUPtr ToProperties() const;
@@ -164,6 +175,9 @@ protected:
 	u_int requestedSamples;
 	// If samples 0 and 1 should be expressed in pixels
 	bool imageSamplesEnable;
+
+	// Unique-per-call fallback counter for GetPass() (see above)
+	mutable std::atomic<u_int> passCounter{0};
 };
 
 }

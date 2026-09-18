@@ -35,6 +35,8 @@ OPENCL_FORCE_INLINE float Sampler_GetSample(
 			return MetropolisSampler_GetSample(taskConfig, index SAMPLER_PARAM);
 		case TILEPATHSAMPLER:
 			return TilePathSampler_GetSample(taskConfig, index SAMPLER_PARAM);
+		case PMJ02SAMPLER:
+			return PMJ02Sampler_GetSample(taskConfig, index SAMPLER_PARAM);
 		default:
 			// Something has gone very wrong here
 			return 0.f;
@@ -62,6 +64,10 @@ OPENCL_FORCE_INLINE void Sampler_SplatSample(
 					FILM_PARAM);
 		case TILEPATHSAMPLER:
 			return TilePathSampler_SplatSample(taskConfig
+					SAMPLER_PARAM
+					FILM_PARAM);
+		case PMJ02SAMPLER:
+			return PMJ02Sampler_SplatSample(taskConfig
 					SAMPLER_PARAM
 					FILM_PARAM);
 		default:
@@ -111,6 +117,14 @@ OPENCL_FORCE_NOT_INLINE void Sampler_NextSample(
 					filmSubRegion0, filmSubRegion1,
 					filmSubRegion2, filmSubRegion3
 					SAMPLER_PARAM);
+		case PMJ02SAMPLER:
+			return PMJ02Sampler_NextSample(taskConfig,
+					filmNoise,
+					filmUserImportance,
+					filmWidth, filmHeight,
+					filmSubRegion0, filmSubRegion1,
+					filmSubRegion2, filmSubRegion3
+					SAMPLER_PARAM);
 		default:
 			// Something has gone very wrong here
 			return;
@@ -152,6 +166,14 @@ OPENCL_FORCE_NOT_INLINE bool Sampler_Init(
 					SAMPLER_PARAM);
 		case TILEPATHSAMPLER:
 			return TilePathSampler_Init(taskConfig,
+					filmNoise,
+					filmUserImportance,
+					filmWidth, filmHeight,
+					filmSubRegion0, filmSubRegion1,
+					filmSubRegion2, filmSubRegion3
+					SAMPLER_PARAM);
+		case PMJ02SAMPLER:
+			return PMJ02Sampler_Init(taskConfig,
 					filmNoise,
 					filmUserImportance,
 					filmWidth, filmHeight,

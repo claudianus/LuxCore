@@ -55,7 +55,7 @@ OPENCL_FORCE_INLINE float TilePathSampler_GetSample(
 			__global TilePathSample *sample = &samples[gid];
 
 			return SobolSequence_GetSample(sobolDirections, sample->pass + SOBOL_STARTOFFSET,
-					sample->rngPass, sample->rng0, sample->rng1, index);	
+					sample->rngPass, sample->rng0, sample->rng1, index, false);
 #endif
 		}
 	}
@@ -190,9 +190,9 @@ OPENCL_FORCE_INLINE bool TilePathSampler_Init(
 	__global const uint* restrict sobolDirections = TilePathSampler_GetSobolDirectionsPtr(samplerSharedData);
 
 	samplesData[IDX_SCREEN_X] = pixelX + SobolSequence_GetSample(sobolDirections, sample->pass + SOBOL_STARTOFFSET,
-			sample->rngPass, sample->rng0, sample->rng1, IDX_SCREEN_X);
+			sample->rngPass, sample->rng0, sample->rng1, IDX_SCREEN_X, false);
 	samplesData[IDX_SCREEN_Y] = pixelY + SobolSequence_GetSample(sobolDirections, sample->pass + SOBOL_STARTOFFSET,
-			sample->rngPass, sample->rng0, sample->rng1, IDX_SCREEN_Y);
+			sample->rngPass, sample->rng0, sample->rng1, IDX_SCREEN_Y, false);
 #endif
 
 	return true;

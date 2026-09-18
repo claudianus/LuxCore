@@ -119,6 +119,7 @@ SobolSampler::SobolSampler(
 	tileSize(tileSz),
 	superSampling(superSmpl),
 	overlapping(overlap),
+	sobolBlueNoiseEnable(false),
 	bucketIndex(std::make_shared<u_int>(0))
 {}
 SobolSampler::SobolSampler(
@@ -143,6 +144,7 @@ SobolSampler::SobolSampler(
 	tileSize(tileSz),
 	superSampling(superSmpl),
 	overlapping(overlap),
+	sobolBlueNoiseEnable(false),
 	bucketIndex(std::make_shared<u_int>(0))
 {}
 
@@ -253,9 +255,17 @@ void SobolSampler::InitNewSample() {
 
 		// Initialize rng0, rng1 and rngPass
 
-		sobolSequence.rng0 = rngGenerator.floatValue();
-		sobolSequence.rng1 = rngGenerator.floatValue();
-		sobolSequence.rngPass = rngGenerator.uintValue();
+		if (sobolBlueNoiseEnable) {
+			// Blue-noise dithered sampling (Heitz et al. 2019): the dither
+			// seed is constant per pixel (across passes); the per-dimension
+			// shifts are derived inside SobolSequence::GetSample()
+			sobolSequence.SetBlueNoiseSeed(
+					SobolSequence::BlueNoiseHash(pixelX + pixelY * 0x9e3779b9u) ^ *sharedData->seedBase);
+		} else {
+			sobolSequence.rngPass = rngGenerator.uintValue();
+			sobolSequence.rng0 = rngGenerator.floatValue();
+			sobolSequence.rng1 = rngGenerator.floatValue();
+		}
 
 		sample0 = pixelX +  sobolSequence.GetSample(pass, 0);
 		sample1 = pixelY +  sobolSequence.GetSample(pass, 1);
@@ -338,7 +348,8 @@ PropertiesUPtr SobolSampler::ToProperties() const {
 			Property("sampler.sobol.bucketsize")(bucketSize) <<
 			Property("sampler.sobol.tilesize")(tileSize) <<
 			Property("sampler.sobol.supersampling")(superSampling) <<
-			Property("sampler.sobol.overlapping")(overlapping);
+			Property("sampler.sobol.overlapping")(overlapping) <<
+			Property("sampler.sobol.bluenoise.enable")(sobolBlueNoiseEnable);
 	return props_ptr;
 }
 
@@ -356,7 +367,8 @@ PropertiesUPtr SobolSampler::ToProperties(const Properties &cfg) {
 			cfg.Get(GetDefaultProps()->Get("sampler.sobol.bucketsize")) <<
 			cfg.Get(GetDefaultProps()->Get("sampler.sobol.tilesize")) <<
 			cfg.Get(GetDefaultProps()->Get("sampler.sobol.supersampling")) <<
-			cfg.Get(GetDefaultProps()->Get("sampler.sobol.overlapping"));
+			cfg.Get(GetDefaultProps()->Get("sampler.sobol.overlapping")) <<
+			cfg.Get(GetDefaultProps()->Get("sampler.sobol.bluenoise.enable"));
 	return props;
 }
 
@@ -372,12 +384,16 @@ SamplerUPtr SobolSampler::FromProperties(const Properties &cfg, const RandomGene
 	const float tileSize = RoundUpPow2(cfg.Get(GetDefaultProps()->Get("sampler.sobol.tilesize")).Get<u_int>());
 	const float superSampling = cfg.Get(GetDefaultProps()->Get("sampler.sobol.supersampling")).Get<u_int>();
 	const float overlapping = cfg.Get(GetDefaultProps()->Get("sampler.sobol.overlapping")).Get<u_int>();
+	const bool blueNoiseEnable = cfg.Get(GetDefaultProps()->Get("sampler.sobol.bluenoise.enable")).Get<bool>();
 
-	return std::make_unique<SobolSampler>(rndGen, film, flmSplatter, imageSamplesEnable,
+	auto sampler = std::make_unique<SobolSampler>(rndGen, film, flmSplatter, imageSamplesEnable,
 			adaptiveStrength, adaptiveUserImportanceWeight,
 			bucketSize, tileSize, superSampling, overlapping,
 			dynamic_pointer_cast<SobolSamplerSharedData>(sharedData)
 	);
+	sampler->SetBlueNoiseEnable(blueNoiseEnable);
+
+	return sampler;
 }
 
 slg::ocl::Sampler *SobolSampler::FromPropertiesOCL(const Properties &cfg) {
@@ -390,6 +406,7 @@ slg::ocl::Sampler *SobolSampler::FromPropertiesOCL(const Properties &cfg) {
 	oclSampler->sobol.tileSize = RoundUpPow2(cfg.Get(GetDefaultProps()->Get("sampler.sobol.tilesize")).Get<u_int>());
 	oclSampler->sobol.superSampling = cfg.Get(GetDefaultProps()->Get("sampler.sobol.supersampling")).Get<u_int>();
 	oclSampler->sobol.overlapping = cfg.Get(GetDefaultProps()->Get("sampler.sobol.overlapping")).Get<u_int>();
+	oclSampler->sobol.bluenoiseEnable = cfg.Get(GetDefaultProps()->Get("sampler.sobol.bluenoise.enable")).Get<bool>() ? 1u : 0u;
 
 	return oclSampler;
 }
@@ -413,7 +430,8 @@ PropertiesUPtr SobolSampler::GetDefaultProps() {
 			Property("sampler.sobol.bucketsize")(16) <<
 			Property("sampler.sobol.tilesize")(16) <<
 			Property("sampler.sobol.supersampling")(1) <<
-			Property("sampler.sobol.overlapping")(1);
+			Property("sampler.sobol.overlapping")(1) <<
+			Property("sampler.sobol.bluenoise.enable")(false);
 
 	return props;
 }

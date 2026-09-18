@@ -66,6 +66,7 @@ public:
 
 	virtual float GetSample(const u_int index);
 	virtual void NextSample(const std::vector<SampleResult> &sampleResults);
+	virtual u_int GetPass() const { return tilePass; }
 
 	//--------------------------------------------------------------------------
 	// TilePathSampler specific methods

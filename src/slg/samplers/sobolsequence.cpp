@@ -32,6 +32,8 @@ SobolSequence::SobolSequence() : directions(NULL) {
 	rngPass = 0;
 	rng0 = 0.f;
 	rng1 = 0.f;
+	blueNoiseEnable = false;
+	blueNoiseSeed = 0;
 }
 
 SobolSequence::~SobolSequence() {
@@ -56,13 +58,38 @@ u_int SobolSequence::SobolDimension(const u_int index, const u_int dimension) co
 	return result;
 }
 
+u_int SobolSequence::BlueNoiseHash(u_int x) {
+	// murmur3 32-bit finalizer (must match the GPU kernel version)
+	x ^= x >> 16;
+	x *= 0x7feb352du;
+	x ^= x >> 15;
+	x *= 0x846ca68bu;
+	x ^= x >> 16;
+	return x;
+}
+
 float SobolSequence::GetSample(const u_int pass, const u_int index) {
-	// I scramble pass too in order avoid correlations visible with LIGHTCPU and BIDIRCPU
-	const u_int iResult = SobolDimension(pass + rngPass, index);
+	u_int iResult;
+	float shift;
+
+	if (blueNoiseEnable) {
+		// Blue-noise dithered sampling (Heitz et al. 2019): per-pixel
+		// constant, per-dimension hashed digital shift + Cranley-Patterson
+		// offset. The Sobol index is used unscrambled so a pixel walks its
+		// own stratified prefix of the sequence across passes while
+		// neighboring pixels are decorrelated by the per-pixel seed.
+		const u_int dimSeed = BlueNoiseHash(blueNoiseSeed ^ (index * 0x9e3779b9u + 0x85ebca6bu));
+		iResult = SobolDimension(pass, index) ^ dimSeed;
+		shift = BlueNoiseHash(dimSeed ^ 0xc2b2ae35u) * (1.f / 4294967296.f);
+	} else {
+		// I scramble pass too in order avoid correlations visible with LIGHTCPU and BIDIRCPU
+		iResult = SobolDimension(pass + rngPass, index);
+
+		// Cranley-Patterson rotation to reduce visible regular patterns
+		shift = (index & 1) ? rng0 : rng1;
+	}
+
 	const float fResult = iResult * (1.f / 0xffffffffu);
-	
-	// Cranley-Patterson rotation to reduce visible regular patterns
-	const float shift = (index & 1) ? rng0 : rng1;
 	const float val = fResult + shift;
 
 	return val - floorf(val);

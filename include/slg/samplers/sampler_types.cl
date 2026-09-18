@@ -29,7 +29,15 @@
 #define IDX_EYE_TIME 2
 #define IDX_DOF_X 3
 #define IDX_DOF_Y 4
+#if defined(SLG_SPECTRAL)
+// Hero-wavelength spectral transport: one extra boot dimension for the
+// shared wavelength offset (mirrors CPU eyeSampleBootSize = 6). RGB mode
+// keeps the historical layout so the sample sequence is unchanged.
+#define IDX_WAVELENGTH 5
+#define IDX_BSDF_OFFSET 6
+#else
 #define IDX_BSDF_OFFSET 5
+#endif
 
 // Relative to IDX_BSDF_OFFSET + PathDepth * VERTEX_SAMPLE_SIZE
 #define IDX_PASSTHROUGH 0
@@ -121,7 +129,8 @@ typedef enum {
 	RANDOM = 0,
 	METROPOLIS = 1,
 	SOBOL = 2,
-	TILEPATHSAMPLER = 3
+	TILEPATHSAMPLER = 3,
+	PMJ02SAMPLER = 4
 } SamplerType;
 
 typedef struct {
@@ -134,7 +143,17 @@ typedef struct {
 		struct {
 			float adaptiveStrength, adaptiveUserImportanceWeight;
 			unsigned int bucketSize, tileSize, superSampling, overlapping;
+			unsigned int bluenoiseEnable;
 		} sobol;
+		// PMJ02 keeps the bucket cursor fields at the same offsets as
+		// sobol/random (the shared sampler prologue reads them through
+		// either member); the tables live in the sampler shared data
+		// buffer after the per-pixel pass array.
+		struct {
+			float adaptiveStrength, adaptiveUserImportanceWeight;
+			unsigned int bucketSize, tileSize, superSampling, overlapping;
+			unsigned int tableSamples, tablePairs;
+		} pmj02;
 		struct {
 			float largeMutationProbability, imageMutationRange;
 			unsigned int maxRejects;

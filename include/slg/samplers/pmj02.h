@@ -16,9 +16,10 @@
  * limitations under the License.                                          *
  ***************************************************************************/
 
-#ifndef _SLG_SOBOL_SAMPLER_H
-#define	_SLG_SOBOL_SAMPLER_H
+#ifndef _SLG_PMJ02_SAMPLER_H
+#define	_SLG_PMJ02_SAMPLER_H
 #include <memory>
+#include <vector>
 
 #include "luxrays/core/randomgen.h"
 #include "luxrays/usings.h"
@@ -28,94 +29,87 @@
 #include "slg/usings.h"
 #include "slg/film/film.h"
 #include "slg/samplers/sampler.h"
-#include "slg/samplers/sobolsequence.h"
+#include "slg/samplers/sobol.h"
 
 namespace slg {
 
 //------------------------------------------------------------------------------
-// SobolSamplerSharedData
+// PMJ02SamplerSharedData
 //
-// Used to share sampler specific data across multiple threads
+// Same layout and behavior as SobolSamplerSharedData (bucket cursor +
+// per-pixel passes); a distinct subclass only so the shared-data registry
+// gets its own entry for the PMJ02SAMPLER tag.
 //------------------------------------------------------------------------------
 
-class SobolSamplerSharedData : public SamplerSharedData {
+class PMJ02SamplerSharedData : public SobolSamplerSharedData {
 public:
-	// Constructors
-	// Note that film is optional for this object
-	SobolSamplerSharedData(const luxrays::RandomGeneratorUPtr & rndGen, FilmPtr engineFlm);
-	SobolSamplerSharedData(const u_int seed, FilmPtr engineFlm);
-	virtual ~SobolSamplerSharedData() { }
+	PMJ02SamplerSharedData(const luxrays::RandomGeneratorUPtr & rndGen, FilmPtr engineFlm) :
+		SobolSamplerSharedData(rndGen, engineFlm) { }
+	PMJ02SamplerSharedData(const u_int seed, FilmPtr engineFlm) :
+		SobolSamplerSharedData(seed, engineFlm) { }
+	virtual ~PMJ02SamplerSharedData() { }
 
+	// Passes start at 0 (Sobol starts at SOBOL_STARTOFFSET to skip
+	// degenerate early points; PMJ02 prefixes are already stratified,
+	// and a mid-sequence window would break the stratification).
 	virtual void Reset();
-
-	std::tuple<u_int, u_int> GetNewBucket(u_int bucketCount);
-
-	u_int GetNewPixelPass(const u_int pixelIndex = 0);
-
-	u_int GetPassCount(const u_int bucketCount) const;
 
 	static std::unique_ptr<SamplerSharedData> FromProperties(
 		const luxrays::Properties &cfg,
 		const luxrays::RandomGeneratorUPtr & rndGen,
 		FilmPtr film
-	);
-
-	FilmRef GetEngineFilm() { return *engineFilm; }
-	FilmConstRef GetEngineFilm() const { return *engineFilm; }
-	bool HasEngineFilm() { return bool(engineFilm); }
-
-	std::shared_ptr<u_int> seedBase;
-	u_int filmRegionPixelCount;
-
-protected:
-	std::shared_ptr<u_int> bucketIndex;  // This can potentially be accessed by
-										 // multiple objects, so we share
-										 // ownership with all to avoid
-										 // heap-use-after-free
-	FilmPtr engineFilm;
-
-	// Holds the current pass for each pixel when using adaptive sampling
-	std::vector<u_int> passPerPixel;
-
-
+	) {
+		return std::make_unique<PMJ02SamplerSharedData>(rndGen, film);
+	}
 };
 
 //------------------------------------------------------------------------------
-// Sobol sampler
+// PMJ02 sampler
 //
-// This sampler is based on Blender Cycles Sobol implementation.
+// Progressive multi-jittered (0,2) sequences (Christensen, Kensler and
+// Kilpatrick 2018): every power-of-two prefix is stratified on every
+// elementary 2D interval. 2D dimension pairs consume consecutive points of
+// per-pair PMJ02 sets (generated at construction with pmj-cpp); each point
+// gets a per-pixel Cranley-Patterson rotation so pixels stay decorrelated.
+// Beyond the generated set size the sequence wraps with a per-cycle rotation
+// (still unbiased).
+//
+// The pixel/bucket/pass bookkeeping is the Sobol one; the shared data object
+// is a SobolSamplerSharedData subclass (same layout, own registry entry).
 //------------------------------------------------------------------------------
 
-class SobolSampler : public Sampler {
+class PMJ02Sampler : public Sampler {
 public:
 
-	SobolSampler(
+	PMJ02Sampler(
 		const luxrays::RandomGeneratorUPtr & rnd,
 		FilmPtr flm,
 		const FilmSampleSplatterUPtr& flmSplatter,
 		const bool imgSamplesEnable,
 		const float adaptiveStr,
 		const float adaptiveUserImpWeight,
-		const u_int bucketSize,
-		const u_int tileSize,
-		const u_int superSampling,
-		const u_int overlapping,
-		SamplerSharedDataSPtr samplerSharedData
+		const u_int bucketSz,
+		const u_int tileSz,
+		const u_int superSmpl,
+		const u_int overlap,
+		SamplerSharedDataSPtr samplerSharedData,
+		const u_int tableSamples
 	);
-	SobolSampler(
+	PMJ02Sampler(
 		const luxrays::RandomGeneratorUPtr & rnd,
 		FilmRef flm,
 		const FilmSampleSplatterUPtr& flmSplatter,
 		const bool imgSamplesEnable,
 		const float adaptiveStr,
 		const float adaptiveUserImpWeight,
-		const u_int bucketSize,
-		const u_int tileSize,
-		const u_int superSampling,
-		const u_int overlapping,
-		SamplerSharedDataSPtr samplerSharedData
+		const u_int bucketSz,
+		const u_int tileSz,
+		const u_int superSmpl,
+		const u_int overlap,
+		SamplerSharedDataSPtr samplerSharedData,
+		const u_int tableSamples
 	);
-	virtual ~SobolSampler();
+	virtual ~PMJ02Sampler();
 
 	virtual SamplerType GetType() const { return GetObjectType(); }
 	virtual std::string GetTag() const { return GetObjectTag(); }
@@ -129,15 +123,12 @@ public:
 
 	u_int GetPassCount() const;
 
-	// Blue-noise dithered sampling (Heitz et al. 2019), opt-in
-	void SetBlueNoiseEnable(const bool enable) { sobolBlueNoiseEnable = enable; }
-
 	//--------------------------------------------------------------------------
 	// Static methods used by SamplerRegistry
 	//--------------------------------------------------------------------------
 
-	static SamplerType GetObjectType() { return SOBOL; }
-	static std::string GetObjectTag() { return "SOBOL"; }
+	static SamplerType GetObjectType() { return PMJ02SAMPLER; }
+	static std::string GetObjectTag() { return "PMJ02SAMPLER"; }
 	static luxrays::PropertiesUPtr ToProperties(const luxrays::Properties &cfg);
 	static SamplerUPtr FromProperties(
 		const luxrays::Properties &cfg,
@@ -148,20 +139,38 @@ public:
 	static slg::ocl::Sampler *FromPropertiesOCL(const luxrays::Properties &cfg);
 	static void AddRequiredChannels(Film::FilmChannels &channels, const luxrays::Properties &cfg);
 
+	// PMJ02 table parameters shared with the OpenCL port. 64 pairs cover
+	// 128 sampling dimensions (path depth ~13); deeper tails clamp to the
+	// last pair (documented limit, harmless in practice).
+	static const u_int PMJ02_TABLE_PAIRS = 64;
+
+	// Fill the host-side device table staging area (pairs x samples x xy
+	// floats) with deterministic PMJ02 sets (seeded by seedBase, one seed
+	// per pair). Used by the GPU backend init.
+	static void FillDeviceTables(u_int pairs, u_int samples, u_int seedBase,
+			float *tables);
+
 private:
 	void InitNewSample();
-	float GetSobolSample(const u_int index);
+	void EnsurePairs(const u_int count);
 
 	static luxrays::PropertiesUPtr GetDefaultProps();
 
+	// One PMJ02 2D set per dimension pair (grown on demand)
+	struct PMJ02Set {
+		std::vector<float> x, y;
+	};
+	std::vector<PMJ02Set> pmjSets;
+	u_int tableSamples;
+	u_int baseSeed;
+
 	std::shared_ptr<SobolSamplerSharedData> sharedData;
-	SobolSequence sobolSequence;
 	float adaptiveStrength, adaptiveUserImportanceWeight;
 	u_int bucketSize, tileSize, superSampling, overlapping;
-	bool sobolBlueNoiseEnable;
 
 	std::shared_ptr<u_int> bucketIndex;
 	u_int pixelOffset, passOffset, pass;
+	u_int pixelX, pixelY;
 	luxrays::TauswortheRandomGenerator rngGenerator;
 
 	float sample0, sample1;
@@ -169,5 +178,5 @@ private:
 
 }
 
-#endif	/* _SLG_SOBOL_SAMPLER_H */
+#endif	/* _SLG_PMJ02_SAMPLER_H */
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4
