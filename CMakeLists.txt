@@ -30,7 +30,7 @@ cmake_policy(VERSION 3.25)
 
 MESSAGE(STATUS "Building LuxCore ${LUXCORE_VERSION}")
 
-project(LuxCore)
+project(LuxCore LANGUAGES C CXX OBJCXX)
 
 MESSAGE(STATUS "C++ compiler identifier is ${CMAKE_CXX_COMPILER_ID}")
 MESSAGE(STATUS "C++ compiler version is ${CMAKE_CXX_COMPILER_VERSION}")

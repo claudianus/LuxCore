@@ -102,3 +102,4 @@ CMakeUserPresets.json
 .vs/
 .vscode/
 tags
+kernel_source_device_*.cl

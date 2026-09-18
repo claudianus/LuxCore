@@ -1,3 +1,15 @@
+### SuperLuxCore
+
+> **SuperLuxCore** is an independent, actively maintained fork of LuxCoreRender
+> (upstream development stalled; this project is maintained separately with the
+> goal of becoming the state-of-the-art open renderer: path guiding on CPU+GPU,
+> modern samplers, MNEE caustics and more). Original LuxCoreRender README
+> follows below unchanged.
+>
+> **Every feature added since the fork is documented** — what it is, why, with
+> references, new properties/API, test scenes, validation and platform support —
+> in [`doc/features/`](doc/features/README.md).
+
 ### LuxCoreRender
 
 ![LuxCoreRender alt text](https://luxcorerender.org/wp-content/uploads/2017/12/wallpaper_lux_05_rend1b.jpg)
