@@ -369,10 +369,23 @@ cl_program oclKernelPersistentCache::Compile(cl_context context, cl_device_id de
 				cl_program program = clCreateProgramWithBinary(context, 1, &device, &kernelSize, 
 						&bins[0],
 						nullptr, &error);
-				CHECK_OCL_ERROR(error);
+				// A cached binary can be rejected by the driver (e.g. an
+				// OS/driver update invalidated the stored IR - observed on
+				// Apple as CL_INVALID_VALUE). Drop the stale file and
+				// recompile from source instead of aborting the render.
+				if (error != CL_SUCCESS || !program) {
+					if (program)
+						clReleaseProgram(program);
+					std::filesystem::remove(filePath);
+					return Compile(context, device, kernelsParameters, kernelSource, cached, errorStr);
+				}
 				
 				error = clBuildProgram(program, 1, &device, nullptr, nullptr, nullptr);
-				CHECK_OCL_ERROR(error);
+				if (error != CL_SUCCESS) {
+					clReleaseProgram(program);
+					std::filesystem::remove(filePath);
+					return Compile(context, device, kernelsParameters, kernelSource, cached, errorStr);
+				}
 
 				if (cached)
 					*cached = true;
