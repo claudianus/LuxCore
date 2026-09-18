@@ -143,6 +143,7 @@ set(SLG_KERNELS
   ${PROJECT_SOURCE_DIR}/include/slg/samplers/sampler_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/samplers/sampler_random_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/samplers/sampler_sobol_funcs.cl
+  ${PROJECT_SOURCE_DIR}/include/slg/samplers/sampler_pmj02_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/samplers/sampler_metropolis_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/samplers/sampler_tilepath_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/bsdf/bsdf_types.cl
@@ -161,6 +162,7 @@ set(SLG_KERNELS
   ${PROJECT_SOURCE_DIR}/include/slg/materials/materialdefs_funcs_glossy2.cl
   ${PROJECT_SOURCE_DIR}/include/slg/materials/materialdefs_funcs_glossycoating.cl
   ${PROJECT_SOURCE_DIR}/include/slg/materials/materialdefs_funcs_glossytranslucent.cl
+  ${PROJECT_SOURCE_DIR}/include/slg/materials/materialdefs_funcs_hair.cl
   ${PROJECT_SOURCE_DIR}/include/slg/materials/materialdefs_funcs_heterogeneousvol.cl
   ${PROJECT_SOURCE_DIR}/include/slg/materials/materialdefs_funcs_homogeneousvol.cl
   ${PROJECT_SOURCE_DIR}/include/slg/materials/materialdefs_funcs_matte.cl
@@ -179,6 +181,7 @@ set(SLG_KERNELS
   ${PROJECT_SOURCE_DIR}/include/slg/materials/material_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/scene/scene_types.cl
   ${PROJECT_SOURCE_DIR}/include/slg/scene/scene_funcs.cl
+  ${PROJECT_SOURCE_DIR}/include/slg/spectral_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/scene/sceneobject_types.cl
   ${PROJECT_SOURCE_DIR}/include/slg/textures/hitpoint/texture_hitpoint_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/textures/mapping/mapping_types.cl
@@ -206,6 +209,7 @@ set(SLG_KERNELS
   ${PROJECT_SOURCE_DIR}/include/slg/textures/texture_imagemap_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/textures/texture_others_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/textures/texture_triplanar_funcs.cl
+  ${PROJECT_SOURCE_DIR}/include/slg/textures/texture_whitenoise_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/textures/fresnel/texture_fresnelcolor_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/textures/fresnel/texture_fresnelconst_funcs.cl
   ${PROJECT_SOURCE_DIR}/include/slg/utils/evalstack_funcs.cl
@@ -254,6 +258,8 @@ set(SLG_CORE_SRCS
   ${PROJECT_SOURCE_DIR}/src/slg/engines/cpurenderengine.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/engines/oclrenderengine.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/engines/pathtracer.cpp
+  ${PROJECT_SOURCE_DIR}/src/slg/engines/pathguiding.cpp
+  ${PROJECT_SOURCE_DIR}/src/slg/engines/pathtracer_mnee.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/engines/tilerepository.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/engines/tilerepositoryserialize.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/engines/bakecpu/bakecpu.cpp
@@ -348,6 +354,7 @@ set(SLG_CORE_SRCS
   ${PROJECT_SOURCE_DIR}/src/slg/lights/strategies/distributionlightstrategy.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/lights/strategies/lightstrategy.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/lights/strategies/logpower.cpp
+  ${PROJECT_SOURCE_DIR}/src/slg/lights/strategies/restirdi.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/lights/strategies/power.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/lights/strategies/uniform.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/lights/visibility/envlightvisibilitycache.cpp
@@ -359,6 +366,7 @@ set(SLG_CORE_SRCS
   ${PROJECT_SOURCE_DIR}/src/slg/materials/glossy2.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/materials/glossycoating.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/materials/glossytranslucent.cpp
+  ${PROJECT_SOURCE_DIR}/src/slg/materials/hairmat.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/materials/material.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/materials/materialdefs.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/materials/matte.cpp
@@ -378,6 +386,11 @@ set(SLG_CORE_SRCS
   ${PROJECT_SOURCE_DIR}/src/slg/samplers/rtpathcpusampler.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/samplers/tilepathsampler.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/samplers/sobol.cpp
+  ${PROJECT_SOURCE_DIR}/src/slg/samplers/pmj02.cpp
+  ${PROJECT_SOURCE_DIR}/src/slg/samplers/pmj02/pmj02.cc
+  ${PROJECT_SOURCE_DIR}/src/slg/samplers/pmj02/pmj02_util.cc
+  ${PROJECT_SOURCE_DIR}/src/slg/samplers/pmj02/select_subquad.cc
+  ${PROJECT_SOURCE_DIR}/src/slg/samplers/pmj02/pmj_util.cc
   ${PROJECT_SOURCE_DIR}/src/slg/samplers/soboldata.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/samplers/sobolsequence.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/samplers/metropolis.cpp
@@ -459,6 +472,7 @@ set(SLG_CORE_SRCS
   ${PROJECT_SOURCE_DIR}/src/slg/textures/math/modulo.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/math/power.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/math/random.cpp
+  ${PROJECT_SOURCE_DIR}/src/slg/textures/whitenoise.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/math/remap.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/math/rounding.cpp
   ${PROJECT_SOURCE_DIR}/src/slg/textures/math/scale.cpp
@@ -533,6 +547,7 @@ set(SLG_KERNEL_SRCS
   ${generated_kernels_dir}/sampler_funcs_kernel.cpp
   ${generated_kernels_dir}/sampler_random_funcs_kernel.cpp
   ${generated_kernels_dir}/sampler_sobol_funcs_kernel.cpp
+  ${generated_kernels_dir}/sampler_pmj02_funcs_kernel.cpp
   ${generated_kernels_dir}/sampler_metropolis_funcs_kernel.cpp
   ${generated_kernels_dir}/sampler_tilepath_funcs_kernel.cpp
   ${generated_kernels_dir}/film_types_kernel.cpp
@@ -578,6 +593,7 @@ set(SLG_KERNEL_SRCS
   ${generated_kernels_dir}/materialdefs_funcs_glossy2_kernel.cpp
   ${generated_kernels_dir}/materialdefs_funcs_glossycoating_kernel.cpp
   ${generated_kernels_dir}/materialdefs_funcs_glossytranslucent_kernel.cpp
+  ${generated_kernels_dir}/materialdefs_funcs_hair_kernel.cpp
   ${generated_kernels_dir}/materialdefs_funcs_heterogeneousvol_kernel.cpp
   ${generated_kernels_dir}/materialdefs_funcs_homogeneousvol_kernel.cpp
   ${generated_kernels_dir}/materialdefs_funcs_matte_kernel.cpp
@@ -618,6 +634,7 @@ set(SLG_KERNEL_SRCS
   ${generated_kernels_dir}/texture_imagemap_funcs_kernel.cpp
   ${generated_kernels_dir}/texture_others_funcs_kernel.cpp
   ${generated_kernels_dir}/texture_random_funcs_kernel.cpp
+  ${generated_kernels_dir}/texture_whitenoise_funcs_kernel.cpp
   ${generated_kernels_dir}/texture_triplanar_funcs_kernel.cpp
   ${generated_kernels_dir}/evalstack_funcs_kernel.cpp
   ${generated_kernels_dir}/mortoncurve_funcs_kernel.cpp
@@ -639,6 +656,7 @@ set(SLG_KERNEL_SRCS
   ${generated_kernels_dir}/lightstrategy_funcs_kernel.cpp
   ${generated_kernels_dir}/scene_types_kernel.cpp
   ${generated_kernels_dir}/scene_funcs_kernel.cpp
+  ${generated_kernels_dir}/spectral_funcs_kernel.cpp
   ${generated_kernels_dir}/sceneobject_types_kernel.cpp
   ${generated_kernels_dir}/mapping_types_kernel.cpp
   ${generated_kernels_dir}/mapping_funcs_kernel.cpp
