@@ -1,0 +1,43 @@
+scene.camera.type = "perspective"
+scene.camera.lookat.orig = -2.78 -8. 2.73
+scene.camera.lookat.target = -2.78 2. 2.73
+scene.camera.fieldofview = 39.1463
+################################################################################
+# hairmat mode 1: direct COLOR (Chiang SigmaAFromReflectance) -- left wall
+scene.materials.HairColor.type = hairmat
+scene.materials.HairColor.color = 0.55 0.18 0.10
+scene.materials.HairColor.eta = 1.55
+scene.materials.HairColor.beta_m = 0.3
+scene.materials.HairColor.beta_n = 0.3
+scene.materials.HairColor.alpha = 2.0
+##
+# hairmat mode 2: ABSORPTION (sigma_a direct) -- right wall
+scene.materials.HairAbsorb.type = hairmat
+scene.materials.HairAbsorb.sigma_a = 0.06 0.10 0.20
+scene.materials.HairAbsorb.eta = 1.55
+scene.materials.HairAbsorb.beta_m = 0.3
+scene.materials.HairAbsorb.beta_n = 0.3
+scene.materials.HairAbsorb.alpha = 2.0
+##
+# hairmat mode 3: MELANIN concentrations -- floor
+scene.materials.HairMelanin.type = hairmat
+scene.materials.HairMelanin.eumelanin = 1.6
+scene.materials.HairMelanin.pheomelanin = 0.2
+scene.materials.HairMelanin.eta = 1.55
+scene.materials.HairMelanin.beta_m = 0.3
+scene.materials.HairMelanin.beta_n = 0.3
+scene.materials.HairMelanin.alpha = 2.0
+############################
+scene.materials.Light.type = matte
+scene.materials.Light.emission = 400. 400. 400.
+scene.materials.Light.emission.id = 0
+scene.materials.Light.kd = 0.75 0.75 0.75
+################################################################################
+scene.objects.HairColor.material = HairColor
+scene.objects.HairColor.ply = scenes/cornell/Khaki.ply
+scene.objects.HairAbsorb.material = HairAbsorb
+scene.objects.HairAbsorb.ply = scenes/cornell/HalveRed.ply
+scene.objects.HairMelanin.material = HairMelanin
+scene.objects.HairMelanin.ply = scenes/cornell/DarkGreen.ply
+scene.objects.Grey.material = Light
+scene.objects.Grey.ply = scenes/cornell/Grey.ply

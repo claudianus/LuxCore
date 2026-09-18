@@ -1,0 +1,19 @@
+scene.camera.lookat = -2.78 -8. 2.73 -2.78 2. 2.73
+scene.camera.fieldofview = 39.1463
+scene.textures.pos.type = position
+scene.textures.wn.type = whitenoise
+scene.textures.wn.texture = pos
+# Drive scalar socket (glossy exponent) to exercise the EVAL_FLOAT path
+scene.materials.wn.type = matte
+scene.materials.wn.kd = wn
+scene.materials.Light.type = matte
+scene.materials.Light.emission = 20. 20. 20.
+scene.materials.Light.kd = 0.75 0.75 0.75
+scene.objects.Khaki.material = wn
+scene.objects.Khaki.ply = scenes/cornell/Khaki.ply
+scene.objects.HalveRed.material = wn
+scene.objects.HalveRed.ply = scenes/cornell/HalveRed.ply
+scene.objects.DarkGreen.material = wn
+scene.objects.DarkGreen.ply = scenes/cornell/DarkGreen.ply
+scene.objects.Grey.material = Light
+scene.objects.Grey.ply = scenes/cornell/Grey.ply

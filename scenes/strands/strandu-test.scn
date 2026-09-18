@@ -1,0 +1,48 @@
+scene.camera.lookat.orig = -0.8 1.3 0.6
+scene.camera.lookat.target = 0.0 0.0 0.4
+################################################################################
+# strand-u (Intercept) -> red(root) to blue(tip) gradient via vertex AOV layer 7
+scene.textures.strandu.type = hitpointvertexaov
+scene.textures.strandu.dataindex = 0
+scene.textures.strandu_x3.type = scale
+scene.textures.strandu_x3.texture1 = strandu
+scene.textures.strandu_x3.texture2 = 3.0
+scene.textures.strandgrad.type = band
+scene.textures.strandgrad.amount = strandu
+scene.textures.strandgrad.interpolation = none
+scene.textures.strandgrad.offset0 = 0.0
+scene.textures.strandgrad.value0 = 1.0 0.0 0.0
+scene.textures.strandgrad.offset1 = 0.5
+scene.textures.strandgrad.value1 = 0.0 0.0 1.0
+##
+scene.materials.hair_mat.type = matte
+scene.materials.hair_mat.kd = strandu
+scene.materials.hair_mat.emission = strandu_x3
+##
+scene.materials.whitematte.type = matte
+scene.materials.whitematte.kd = 0.75 0.75 0.75
+################################################################################
+scene.shapes.room.type = mesh
+scene.shapes.room.ply = scenes/luxball/room-nowall.ply
+##
+scene.shapes.hair_shape.type = strands
+scene.shapes.hair_shape.file = scenes/strands/straight.hair
+scene.shapes.hair_shape.tessellation.type = solidadaptive
+scene.shapes.hair_shape.tessellation.solid.sidecount = 8
+scene.shapes.hair_shape.tessellation.adaptive.maxdepth = 24
+scene.shapes.hair_shape.tessellation.adaptive.error = 0.03
+scene.shapes.hair_shape_baked.type = group
+scene.shapes.hair_shape_baked.0.shape = hair_shape
+scene.shapes.hair_shape_baked.0.transformation = 0.008 0.0 0.0 0.0  0.0 0.008 0.0 0.0  0.0 0.0 0.008 0.0  0.0 0.0 0.3 1.0
+################################################################################
+scene.objects.room.material = whitematte
+scene.objects.room.shape = room
+scene.objects.hair.material = hair_mat
+scene.objects.hair.shape = hair_shape
+scene.objects.hair.transformation = 0.008 0.0 0.0 0.0  0.0 0.008 0.0 0.0  0.0 0.0 0.008 0.0  0.0 0.0 0.3 1.0
+################################################################################
+scene.infinitelight.file = scenes/simple-mat/sky.exr
+scene.infinitelight.gain = 1.5 1.5 1.5
+scene.sunlight.dir = 0.166974 0.59908 0.783085
+scene.sunlight.turbidity = 2.2
+scene.sunlight.gain = 0.00003 0.00003 0.00003
