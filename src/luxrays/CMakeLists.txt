@@ -131,6 +131,7 @@ set(LUXRAYS_SRCS
   ${PROJECT_SOURCE_DIR}/src/luxrays/core/color/spds/regular.cpp
   ${PROJECT_SOURCE_DIR}/src/luxrays/core/color/spds/rgbillum.cpp
   ${PROJECT_SOURCE_DIR}/src/luxrays/core/color/spds/rgbrefl.cpp
+  ${PROJECT_SOURCE_DIR}/src/luxrays/core/color/spectral.cpp
   ${PROJECT_SOURCE_DIR}/src/luxrays/core/color/spectrumwavelengths.cpp
   ${PROJECT_SOURCE_DIR}/src/luxrays/core/color/swcspectrum.cpp
   ${PROJECT_SOURCE_DIR}/src/luxrays/core/accelerator.cpp
@@ -159,6 +160,7 @@ set(LUXRAYS_SRCS
   ${PROJECT_SOURCE_DIR}/src/luxrays/devices/nativeintersectiondevice.cpp
   ${PROJECT_SOURCE_DIR}/src/luxrays/devices/ocldevice.cpp
   ${PROJECT_SOURCE_DIR}/src/luxrays/devices/oclintersectiondevice.cpp
+
   ${PROJECT_SOURCE_DIR}/src/luxrays/utils/buffer.cpp
   ${PROJECT_SOURCE_DIR}/src/luxrays/utils/config.cpp
   ${PROJECT_SOURCE_DIR}/src/luxrays/utils/cuda.cpp
@@ -245,6 +247,97 @@ target_link_libraries(luxrays PRIVATE
   boost::boost
   OpenMP::OpenMP_CXX
 )
+if(APPLE)
+  target_link_libraries(luxrays PRIVATE
+    "-framework Metal"
+    "-framework Foundation"
+  )
+  # Metal device sources are ObjC++ (.mm). This CMake's ninja generator
+# breaks on per-source LANGUAGE overrides in the main list AND ignores
+# $<TARGET_OBJECTS> for STATIC archives, so: compile the .mm pair via a
+# helper OBJECT library, then pass the resulting .o files DIRECTLY into
+# the archive (object files in add_library sources pass through to the
+# archive with real dependency tracking).
+add_library(luxrays_metalobj STATIC
+  ${PROJECT_SOURCE_DIR}/src/luxrays/devices/metaldevice.mm
+  ${PROJECT_SOURCE_DIR}/src/luxrays/devices/metalintersectiondevice.mm
+  ${PROJECT_SOURCE_DIR}/src/luxrays/devices/metalrtaccel.mm)
+# absolute path to the embedded .cl->MSL translator (cwd-relative fails
+# when the render engine is started from another directory)
+target_compile_definitions(luxrays_metalobj PRIVATE
+  LUXCORE_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+# gnu++ std mode: dispatch's Swift-interop headers reject strict
+# c++23 in ObjC mode on this SDK
+target_compile_options(luxrays_metalobj PRIVATE "-std=gnu++23")
+set_source_files_properties(
+  ${PROJECT_SOURCE_DIR}/src/luxrays/devices/metaldevice.mm
+  ${PROJECT_SOURCE_DIR}/src/luxrays/devices/metalintersectiondevice.mm
+  ${PROJECT_SOURCE_DIR}/src/luxrays/devices/metalrtaccel.mm
+  PROPERTIES LANGUAGE OBJCXX)
+target_include_directories(luxrays_metalobj PRIVATE
+  ${PROJECT_SOURCE_DIR}/include
+  ${PROJECT_SOURCE_DIR}/deps/cuew/include
+  ${PROJECT_SOURCE_DIR}/deps/clew/include
+  ${PROJECT_SOURCE_DIR}/deps/optix-7.1.0/include
+  ${GENERATED_INCLUDE_DIR}
+  # the full_deploy dependency tree (the same include paths the main
+  # luxrays target gets from its conan-generated configs)
+  ${CMAKE_BINARY_DIR}/generators/../../dependencies/full_deploy/host/boost/1.88.0/Release/armv8/include
+  ${CMAKE_BINARY_DIR}/generators/../../dependencies/full_deploy/host/onetbb/2023.0.0/Release/armv8/include
+  ${CMAKE_BINARY_DIR}/generators/../../dependencies/full_deploy/host/openimageio/3.1.14.0/Release/armv8/include
+  ${CMAKE_BINARY_DIR}/generators/../../dependencies/full_deploy/host/imath/3.2.2/Release/armv8/include
+  ${CMAKE_BINARY_DIR}/generators/../../dependencies/full_deploy/host/openexr/3.4.13/Release/armv8/include
+  ${CMAKE_BINARY_DIR}/generators/../../dependencies/full_deploy/host/embree/4.4.1/Release/armv8/include)
+set_property(TARGET luxrays_metalobj PROPERTY POSITION_INDEPENDENT_CODE ON)
+# Propagate the Metal archive: every luxrays consumer (pyluxcore,
+# samples, tests) links BOTH archives - libluxrays.a references the
+# Metal symbols, libluxrays_metalobj.a defines them.
+target_link_libraries(luxrays PUBLIC luxrays_metalobj)
+endif()
+
+# BVH dumper: builds the real engine BVH for PLY meshes and writes the
+# exact GPU buffers the OpenCL backend uploads (vertices / nodes with
+# global leaf indices / per-triangle normals / meta). Used by the
+# Metal PoC to render arbitrary geometry through the engine's own
+# builder (see metal-poc/bvh_dump.cpp + bvhaccelhw.cpp BVHKernel).
+add_executable(bvh_dump ${CMAKE_CURRENT_SOURCE_DIR}/../../../metal-poc/bvh_dump.cpp)
+add_executable(enum_metal_test ${CMAKE_CURRENT_SOURCE_DIR}/../../../metal-poc/enum_metal_test.cpp)
+add_executable(metal_kernel_smoke ${CMAKE_CURRENT_SOURCE_DIR}/../../../metal-poc/metal_kernel_smoke.cpp)
+add_executable(metal_initseed_smoke ${CMAKE_CURRENT_SOURCE_DIR}/../../../metal-poc/metal_initseed_smoke.cpp)
+set_target_properties(bvh_dump PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+target_link_libraries(bvh_dump PRIVATE
+  luxrays
+  embree::embree
+  openimageio::openimageio
+  boost::boost
+  OpenMP::OpenMP_CXX
+)
+# Metal device enumeration smoke test (Context must list DEVICE_TYPE_METAL_GPU)
+target_link_libraries(enum_metal_test PRIVATE
+  luxrays
+  embree::embree
+  openimageio::openimageio
+  boost::boost
+  OpenMP::OpenMP_CXX
+  "-framework Metal"
+  "-framework Foundation")
+target_link_libraries(metal_kernel_smoke PRIVATE
+  luxrays
+  embree::embree
+  openimageio::openimageio
+  boost::boost
+  OpenMP::OpenMP_CXX
+  "-framework Metal"
+  "-framework Foundation")
+target_link_libraries(metal_initseed_smoke PRIVATE
+  luxrays
+  embree::embree
+  openimageio::openimageio
+  boost::boost
+  OpenMP::OpenMP_CXX
+  "-framework Metal"
+  "-framework Foundation")
+set_target_properties(enum_metal_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 ################################################################################
 #

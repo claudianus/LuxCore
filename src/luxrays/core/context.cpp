@@ -40,6 +40,10 @@
 #include "luxrays/devices/cudadevice.h"
 #include "luxrays/devices/cudaintersectiondevice.h"
 #endif
+#if defined(__APPLE__) && !defined(LUXRAYS_DISABLE_METAL)
+#include "luxrays/devices/metaldevice.h"
+#include "luxrays/devices/metalintersectiondevice.h"
+#endif
 
 using namespace std;
 using namespace luxrays;
@@ -115,9 +119,13 @@ Context::Context(LuxRaysDebugHandler handler, PropertiesUPtr&& config)
 
 	if (isCudaAvilable) {
 		if(!cuDriverGetVersion) {
+			// NOTE: the original code returned here, aborting the whole
+			// device enumeration (OpenCL/Metal/Native descriptions were
+			// already added but everything after - including the device
+			// info print - was skipped, and Metal never enumerated on
+			// CUDA-less Apple systems). Skip CUDA only instead.
 			LR_LOG((*this), "Warning: No CUDA API available");
-			return;
-		}
+		} else {
 		LR_LOG((*this), "CUDA support: available");
 
 		int driverVersion;
@@ -135,9 +143,21 @@ Context::Context(LuxRaysDebugHandler handler, PropertiesUPtr&& config)
 		}
 
 		CUDADeviceDescription::AddDeviceDescs(deviceDescriptions);
+		}
 	}
 #else
 	LR_LOG((*this), "CUDA support: disabled");
+#endif
+
+#if defined(__APPLE__) && !defined(LUXRAYS_DISABLE_METAL)
+	//--------------------------------------------------------------------------
+	// Add all Metal devices
+	//--------------------------------------------------------------------------
+
+	LR_LOG((*this), "Metal support: enabled");
+	MetalDeviceDescription::AddDeviceDescs(deviceDescriptions);
+#else
+	LR_LOG((*this), "Metal support: disabled");
 #endif
 
 	// Print device info
@@ -320,6 +340,17 @@ std::vector<IntersectionDeviceUPtr> Context::CreateIntersectionDevices(
 			);
 		}
 #endif
+#if defined(__APPLE__) && !defined(LUXRAYS_DISABLE_METAL)
+		else if (deviceType & DEVICE_TYPE_METAL_ALL) {
+			// Metal devices
+			const auto& metalDeviceDesc =
+				static_cast<MetalDeviceDescriptionConstRef>(devDesc);
+
+			device = std::make_unique<MetalIntersectionDevice>(
+				*this, metalDeviceDesc, indexOffset + i
+			);
+		}
+#endif
 		else {
 			throw runtime_error(
 				"Unknown device type in Context::CreateIntersectionDevices(): "
@@ -402,6 +433,17 @@ std::vector<HardwareDeviceUPtr> Context::CreateHardwareDevices(
 
 			device = std::make_unique<CUDADevice>(
 				*this, cudaDeviceDesc, indexOffset + i
+			);
+		}
+#endif
+#if defined(__APPLE__) && !defined(LUXRAYS_DISABLE_METAL)
+		else if (deviceType & DEVICE_TYPE_METAL_ALL) {
+			// Metal devices
+			const auto& metalDeviceDesc =
+				static_cast<MetalDeviceDescriptionConstRef>(devDesc);
+
+			device = std::make_unique<MetalDevice>(
+				*this, metalDeviceDesc, indexOffset + i
 			);
 		}
 #endif

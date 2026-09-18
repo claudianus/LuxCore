@@ -55,6 +55,9 @@ public:
 	virtual bool Intersect(const Ray *ray, RayHit *hit) const;
 
 	friend class MBVHKernel;
+	// Native Metal HWRT kernel (metalrtaccel.mm): reads the leaf metadata
+	// (bvhLeafs/uniqueLeafs/transforms) to build MTLAccelerationStructures.
+	friend class MetalRTKernel;
 
 private:
 	static bool MeshPtrCompare(const Mesh *, const Mesh *);

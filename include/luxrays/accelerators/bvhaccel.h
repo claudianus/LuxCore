@@ -52,6 +52,20 @@ public:
 
 	virtual bool Intersect(const Ray *ray, RayHit *hit) const;
 
+	// Read-only access to the built GPU-layout tree: node array
+	// (leaf vertex indices are MESH-LOCAL - apply per-mesh offsets)
+	// and the mesh list order used at Init(). Metal/GPU backends and
+	// dumpers need these to upload the exact same data the OpenCL
+	// kernel receives (see BVHKernel in bvhaccelhw.cpp).
+	const luxrays::ocl::BVHArrayNode *GetNodes(u_int *count = nullptr) const {
+		if (count)
+			*count = nNodes;
+		return bvhTree.get();
+	}
+	const std::deque<const Mesh *> &GetMeshes() const { return meshes; }
+	u_longlong GetTotalVertexCount() const { return totalVertexCount; }
+	u_longlong GetTotalTriangleCount() const { return totalTriangleCount; }
+
 	static BVHParams ToBVHParams(const Properties &props);
 
 	friend class BVHKernel;
