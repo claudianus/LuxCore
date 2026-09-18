@@ -22,8 +22,18 @@ OPENCL_FORCE_INLINE float3 Volume_Emission(__global const Volume *vol, __global 
 	TEXTURES_PARAM_DECL) {
 	const uint emiTexIndex = vol->volume.volumeEmissionTexIndex;
 	if (emiTexIndex != NULL_INDEX) {
+#if defined(SLG_SPECTRAL)
+		// Emission-context eval: leaf RGB producers pick the illuminant
+		// Smits basis (mirrors CPU GetEmissionSpectrumValue). tmpHitPoint
+		// is a task-local buffer; the flag is restored after the eval.
+		const uint prevEmissionEval = hitPoint->spectralEmissionEval;
+		((__global HitPoint *)hitPoint)->spectralEmissionEval = 1u;
+#endif
 		const float3 emiTex = Texture_GetSpectrumValue(emiTexIndex, hitPoint
 			TEXTURES_PARAM);
+#if defined(SLG_SPECTRAL)
+		((__global HitPoint *)hitPoint)->spectralEmissionEval = prevEmissionEval;
+#endif
 		return clamp(emiTex, 0.f, INFINITY);
 	} else
 		return BLACK;
@@ -31,8 +41,21 @@ OPENCL_FORCE_INLINE float3 Volume_Emission(__global const Volume *vol, __global 
 
 OPENCL_FORCE_INLINE void Volume_InitializeTmpHitPoint(__global HitPoint *tmpHitPoint,
 		const float3 rayOrig, const float3 rayDir, const float passThroughEvent) {
+	// Preserve the path spectral state: Scene_Intersect() copies it onto
+	// tmpHitPoint before the volume scatter walk, and HitPoint_InitDefault
+	// would otherwise reset it to the neutral default.
+	const float swSave0 = tmpHitPoint->spectralW[0];
+	const float swSave1 = tmpHitPoint->spectralW[1];
+	const float swSave2 = tmpHitPoint->spectralW[2];
+	const uint heroAliveSave = tmpHitPoint->spectralHeroAlive;
+
 	// Initialize tmpHitPoint
 	HitPoint_InitDefault(tmpHitPoint);
+
+	tmpHitPoint->spectralW[0] = swSave0;
+	tmpHitPoint->spectralW[1] = swSave1;
+	tmpHitPoint->spectralW[2] = swSave2;
+	tmpHitPoint->spectralHeroAlive = heroAliveSave;
 
 	VSTORE3F(rayDir, &tmpHitPoint->fixedDir.x);
 	VSTORE3F(rayOrig, &tmpHitPoint->p.x);

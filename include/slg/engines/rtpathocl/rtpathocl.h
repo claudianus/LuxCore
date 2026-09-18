@@ -127,6 +127,11 @@ protected:
 	// Used by RTPathOCLRenderEngine code to sync. with render thread 0
 	std::barrier<completion_t> *syncBarrier;
 	std::atomic<RTPathOCLSyncType> syncType;
+	// True only after the start handshake with render thread 0 completed.
+	// When Start() fails halfway (i.e. a kernel compilation error) the
+	// render thread never enters its sync loop and a barrier wait inside
+	// StopLockLess() would block forever.
+	bool syncThreadsRunning;
 
 	// Used by all render threads to sync.
 	std::barrier<completion_t> *frameBarrier;

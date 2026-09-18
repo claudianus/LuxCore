@@ -496,7 +496,7 @@ __kernel void AdvancePaths_MK_RT_DL(
 			passThroughEvent,
 			&rays[gid], &rayHits[gid], &task->tmpBsdf,
 			&connectionThroughput, WHITE,
-			NULL,
+			sampleResult,
 			true
 			MATERIALS_PARAM
 			);
@@ -541,14 +541,39 @@ __kernel void AdvancePaths_MK_RT_DL(
 		} else
 			taskDirectLight->directLightResult = SHADOWED;
 
-		// Check if this is the last path vertex
-		if (sampleResult->lastPathVertex)
-			pathState = MK_SPLAT_SAMPLE;
-		else
-			pathState = MK_GENERATE_NEXT_VERTEX_RAY;
+		// MNEE: if the blocker is a delta specular surface and the light is
+		// a positional delta emitter, try to solve the specular chain
+		// x0 -> x1 -> y (the kernel port of PathTracer::MNEEDirectSampling
+		// in pathtracer_mnee.cpp), else the multi-specular chain
+		// (MNEEMultiDirectSampling port) when maxspecular > 1. The plain
+		// estimator is 0 on these paths and forward BSDF sampling can not
+		// hit a positional delta light, so the estimators are disjoint and
+		// no MIS is required.
+		// Mnee_Start returns 1 (single vertex started), 2 (single vertex
+		// inapplicable but the chain may apply: mirror opposite-side seed),
+		// 0 (neither).
+		const int mneeStartResult =
+				((taskDirectLight->directLightResult == SHADOWED) ?
+				Mnee_Start(taskConfig, task, taskDirectLight, taskState,
+					&rayHits[gid], &rays[gid]
+					LIGHTS_PARAM) : 0);
+		if ((mneeStartResult == 1) ||
+				((mneeStartResult == 2) &&
+				 MneeChain_StartFromShadow(taskConfig, task, taskDirectLight, taskState,
+					&rays[gid],
+					&directLightVolInfos[gid], &eyePathInfos[gid]
+					LIGHTS_PARAM))) {
+			taskState->state = MK_MNEE_NEXT_VERTEX;
+		} else {
+			// Check if this is the last path vertex
+			if (sampleResult->lastPathVertex)
+				pathState = MK_SPLAT_SAMPLE;
+			else
+				pathState = MK_GENERATE_NEXT_VERTEX_RAY;
 
-		// Save the state
-		taskState->state = pathState;
+			// Save the state
+			taskState->state = pathState;
+		}
 	}
 }
 
@@ -617,6 +642,15 @@ __kernel void AdvancePaths_MK_DL_ILLUMINATE(
 				Sampler_GetSample(taskConfig, sampleOffset + IDX_DIRECTLIGHT_Y SAMPLER_PARAM),
 				Sampler_GetSample(taskConfig, sampleOffset + IDX_DIRECTLIGHT_Z SAMPLER_PARAM),
 				Sampler_GetSample(taskConfig, sampleOffset + IDX_DIRECTLIGHT_W SAMPLER_PARAM),
+				taskConfig->pathTracer.restir.enabled,
+				taskConfig->pathTracer.restir.candidateCount,
+				taskConfig->pathTracer.restir.temporalEnable,
+				// Store: only depth-0 vertices refresh the per-pixel
+				// reservoir (see DirectLight_Illuminate()).
+				taskConfig->pathTracer.restir.temporalEnable &&
+						(pathInfo->depth.depth == 0),
+				sampleResult->pixelY * filmWidth + sampleResult->pixelX,
+				restirReservoirs,
 				&taskDirectLight->illumInfo
 				LIGHTS_PARAM)) {
 		// I have now to evaluate the BSDF
@@ -682,7 +716,13 @@ __kernel void AdvancePaths_MK_DL_SAMPLE_BSDF(
 			&task->tmpPathDepthInfo,
 			&taskState->bsdf,
 			VLOAD3F(&rays[gid].d.x)
-			LIGHTS_PARAM)) {
+			LIGHTS_PARAM,
+			guideChunk0, guideChunk1, guideChunk2, guideChunk3,
+			guideChunk4, guideChunk5, guideChunk6, guideChunk7,
+			guideChunk8, guideChunk9, guideChunk10, guideChunk11,
+			guideChunk12, guideChunk13, guideChunk14, guideChunk15,
+			guidingEnable,
+			guideCubeMinX, guideCubeMinY, guideCubeMinZ, guideCubeSize)) {
 		__global GPUTask *task = &tasks[gid];
 		Seed seedValue = task->seed;
 		// This trick is required by SAMPLER_PARAM macro
@@ -711,6 +751,62 @@ __kernel void AdvancePaths_MK_DL_SAMPLE_BSDF(
 		// however, I have to check if this is the last path vertex
 		taskState->state = (sampleResult->lastPathVertex) ? MK_SPLAT_SAMPLE : MK_GENERATE_NEXT_VERTEX_RAY;
 	}
+}
+
+//------------------------------------------------------------------------------
+// Evaluation of the Path finite state machine.
+//
+// MNEE specular chain sub-state machine (see Mnee_ProcessState() in
+// pathoclbase_funcs.cl): solves the specular chain x0 -> x1 -> y after the
+// direct light shadow ray was blocked by a delta specular surface. One
+// trace per render iteration: this kernel either consumes the trace result
+// of the current MNEE ray (seed / Newton proposal / x1 -> y shadow) and
+// writes the next one, or exits back to the normal path advance.
+//
+// From: MK_MNEE_NEXT_VERTEX
+// To: MK_MNEE_NEXT_VERTEX (Newton iterations) or MK_SPLAT_SAMPLE or
+//     MK_GENERATE_NEXT_VERTEX_RAY
+//------------------------------------------------------------------------------
+
+__kernel void AdvancePaths_MK_MNEE_NEXT_VERTEX(
+		KERNEL_ARGS
+		) {
+	const size_t gid = get_global_id(0);
+
+	// Read the path state
+	__global GPUTaskState *taskState = &tasksState[gid];
+	PathState pathState = taskState->state;
+#if defined(DEBUG_PRINTF_KERNEL_NAME)
+	if (gid == 0)
+		printf("Kernel: AdvancePaths_MK_MNEE_NEXT_VERTEX(state = %d)\n", pathState);
+	else
+		return;
+#endif
+	if (pathState != MK_MNEE_NEXT_VERTEX)
+		return;
+
+ 	//--------------------------------------------------------------------------
+	// Start of variables setup
+	//--------------------------------------------------------------------------
+
+	__global GPUTask *task = &tasks[gid];
+	__global EyePathInfo *pathInfo = &eyePathInfos[gid];
+	__global SampleResult *sampleResult = &sampleResultsBuff[gid];
+	__constant const Scene* restrict scene = &taskConfig->scene;
+
+	// Initialize image maps page pointer table
+	INIT_IMAGEMAPS_PAGES
+
+	//--------------------------------------------------------------------------
+	// End of variables setup
+	//--------------------------------------------------------------------------
+
+	Mnee_ProcessState(taskConfig,
+			task, &tasksDirectLight[gid], taskState, pathInfo,
+			&rays[gid], &rayHits[gid], &directLightVolInfos[gid],
+			sampleResult, (uint)gid,
+			worldCenterX, worldCenterY, worldCenterZ, worldRadius
+			LIGHTS_PARAM);
 }
 
 //------------------------------------------------------------------------------
@@ -789,11 +885,159 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 			cosSampledDir = -1.f;
 			bsdfEvent = pathInfo->lastBSDFEvent;
 		} else {
-			bsdfSample = BSDF_Sample(bsdf,
-					Sampler_GetSample(taskConfig, sampleOffset + IDX_BSDF_X SAMPLER_PARAM),
-					Sampler_GetSample(taskConfig, sampleOffset + IDX_BSDF_Y SAMPLER_PARAM),
-					&sampledDir, &bsdfPdfW, &cosSampledDir, &bsdfEvent
-					MATERIALS_PARAM);
+			// Path guiding (P1-3 M2b): frozen-table one-sample MIS,
+			// mirroring PathTracer::RenderEyePath() on the CPU (see
+			// src/slg/engines/pathtracer.cpp). Training records below (M2b-2).
+			const BSDFEvent eventTypes = BSDF_GetEventTypes(bsdf MATERIALS_PARAM);
+			const float invGuideSize = 1.f / guideCubeSize;
+			const uint guideCell = Guide_CellIndex(
+					VLOAD3F(&bsdf->hitPoint.p.x),
+					guideCubeMinX, guideCubeMinY, guideCubeMinZ, invGuideSize);
+			__global const float *guideTb = Guide_Chunk(guideCell >> 5,
+					guideChunk0, guideChunk1, guideChunk2, guideChunk3,
+					guideChunk4, guideChunk5, guideChunk6, guideChunk7,
+					guideChunk8, guideChunk9, guideChunk10, guideChunk11,
+					guideChunk12, guideChunk13, guideChunk14, guideChunk15);
+			const uint guideLocal = guideCell & 31u;
+			const bool tryGuide = (guidingEnable != 0u) &&
+					!BSDF_IsDelta(bsdf MATERIALS_PARAM) &&
+					((eventTypes & GLOSSY) != 0u) &&
+					(BSDF_GetGlossiness(bsdf MATERIALS_PARAM) >= .3f) &&
+					(pathInfo->depth.depth >= 2u) &&
+					(guideTb[guideLocal * 33u + 32u] >= GUIDE_WARMUP_RECORDS);
+			// Guiding stats
+			if (tryGuide)
+				guideDbgBuff[0] = 1u;
+			// M2c adaptive mixture (mirrors the CPU side): selection
+			// probability from the frozen-in-round coarse cell total.
+			const float wGuide = tryGuide ?
+					Guide_MixWeight(guideTb[guideLocal * 33u + 32u]) : .5f;
+			const float uSelRaw = Sampler_GetSample(taskConfig, sampleOffset + IDX_BSDF_X SAMPLER_PARAM);
+			const bool takeGuideSide = (uSelRaw < wGuide);
+			const float uSelRescaled = takeGuideSide ?
+					uSelRaw / max(wGuide, 1e-6f) :
+					(uSelRaw - wGuide) / max(1.f - wGuide, 1e-6f);
+			bool guided = false;
+			if (tryGuide && takeGuideSide) {
+				float guidePdfW;
+				float3 guideDir;
+				const float3 shadeN = VLOAD3F(&bsdf->hitPoint.shadeN.x);
+				const float uBin = GuidingHash(
+						(sampleResult->pixelX * 73856093u) ^
+						(sampleResult->pixelY * 19349663u) ^
+						(GuidingPass(taskConfig, gid, samplesBuff) * 83492791u) ^
+						(sampleOffset * 2971215073u)) * (1.f / 4294967296.f);
+				if (Guide_Sample(guideTb, guideLocal,
+						shadeN, uBin, uSelRescaled,
+						Sampler_GetSample(taskConfig, sampleOffset + IDX_BSDF_Y SAMPLER_PARAM),
+						&guideDir, &guidePdfW) && (guidePdfW > 0.f)) {
+					float3 discardDir;
+					float discardPdfW, discardCos;
+					BSDFEvent shadowEvent = (BSDFEvent)0;
+					const float3 discardEval = BSDF_Sample(bsdf,
+							uSelRescaled,
+							Sampler_GetSample(taskConfig, sampleOffset + IDX_BSDF_Y SAMPLER_PARAM),
+							&discardDir, &discardPdfW, &discardCos, &shadowEvent
+							MATERIALS_PARAM);
+					BSDFEvent guideEvent;
+					float guideBsdfPdfW;
+					const float3 guideEvalDouble = BSDF_Evaluate(bsdf,
+							guideDir, &guideEvent, &guideBsdfPdfW
+							MATERIALS_PARAM);
+					// Same Disney double-cos workaround as the CPU side
+					const float cosLocal = fabs(Frame_ToLocal(&bsdf->frame, guideDir).z);
+					const float3 guideEval = (cosLocal > 1e-3f) ?
+							guideEvalDouble / cosLocal : BLACK;
+					if (!Spectrum_IsBlack(guideEval)) {
+						const float mixPdfW = (1.f - wGuide) * guideBsdfPdfW + wGuide * guidePdfW;
+						if (mixPdfW > 0.f) {
+							sampledDir = guideDir;
+							bsdfSample = guideEval / mixPdfW;
+							bsdfPdfW = mixPdfW;
+							cosSampledDir = fabs(dot(shadeN, sampledDir));
+									bsdfEvent = Spectrum_IsBlack(discardEval) ? guideEvent : shadowEvent;
+									guided = true;
+									// Guiding stats
+									guideDbgBuff[1] = 1u;
+								} else {
+							guided = true;
+							bsdfSample = BLACK;
+						}
+					} else {
+						guided = true;
+						bsdfSample = BLACK;
+					}
+				} else {
+					guided = true;
+					bsdfSample = BLACK;
+				}
+			}
+			if (!guided) {
+				const float uBsdf = tryGuide ?
+						uSelRescaled : Sampler_GetSample(taskConfig, sampleOffset + IDX_BSDF_X SAMPLER_PARAM);
+				bsdfSample = BSDF_Sample(bsdf,
+						uBsdf,
+						Sampler_GetSample(taskConfig, sampleOffset + IDX_BSDF_Y SAMPLER_PARAM),
+						&sampledDir, &bsdfPdfW, &cosSampledDir, &bsdfEvent
+						MATERIALS_PARAM);
+#if defined(SLG_SPECTRAL)
+				// A dispersive transmit may have collapsed the alive mask on
+				// the hit point: carry it back so the next intersection
+				// (which re-copies from the SampleResult) keeps it.
+				sampleResult->spectralHeroAlive = bsdf->hitPoint.spectralHeroAlive;
+#endif
+				if (tryGuide) {
+					const float3 hitP = VLOAD3F(&bsdf->hitPoint.p.x);
+					const float3 shadeN = VLOAD3F(&bsdf->hitPoint.shadeN.x);
+					const float guidePdfW = Guide_Pdf(guideTb, guideLocal,
+							shadeN, sampledDir);
+					const float mixPdfW = (1.f - wGuide) * bsdfPdfW + wGuide * guidePdfW;
+					if (mixPdfW > 0.f) {
+						bsdfSample *= bsdfPdfW / mixPdfW;
+						bsdfPdfW = mixPdfW;
+					}
+				}
+			}
+
+			// Path guiding (P1-3 M2b-2): incident-value training record
+			// (strided per-task slot, no atomics): local DL+emission value
+			// added at this vertex, normalized by arrival throughput.
+			// First bounce per task uses a garbage baseline (clamped by
+			// the host drain guard); duplicates across passes are valid
+			// training data (mixture stays exact for any field).
+			{
+				// NOTE: MAKE_FLOAT3 (raw (float3)(...) splats on Metal,
+				// bare float3(...) rejected by Apple OpenCL).
+				const float3 radNow = MAKE_FLOAT3(
+						sampleResult->directDiffuse.c[0] + sampleResult->directGlossy.c[0] + sampleResult->emission.c[0],
+						sampleResult->directDiffuse.c[1] + sampleResult->directGlossy.c[1] + sampleResult->emission.c[1],
+						sampleResult->directDiffuse.c[2] + sampleResult->directGlossy.c[2] + sampleResult->emission.c[2]);
+				const float3 radStart = MAKE_FLOAT3(
+						taskState->guideRadStart[0],
+						taskState->guideRadStart[1],
+						taskState->guideRadStart[2]);
+				taskState->guideRadStart[0] = radNow.x;
+				taskState->guideRadStart[1] = radNow.y;
+				taskState->guideRadStart[2] = radNow.z;
+				const float localValue = (radNow.x + radNow.y + radNow.z -
+						radStart.x - radStart.y - radStart.z) * (1.f / 3.f);
+				const float3 thr = VLOAD3F(&taskState->throughput.c[0]);
+				const float arrival = max((thr.x + thr.y + thr.z) * (1.f / 3.f), 1e-3f);
+				const float3 backDir = -VLOAD3F(&ray->d.x);
+				const uint recCell = Guide_CellIndex16(
+						VLOAD3F(&bsdf->hitPoint.p.x),
+						guideCubeMinX, guideCubeMinY, guideCubeMinZ, invGuideSize);
+				const uint recBin = Guide_DirBin16(backDir);
+				const float flux = localValue / arrival;
+				Guide_RecBuf((uint)gid,
+						guideRec0, guideRec1, guideRec2, guideRec3,
+						guideRec4, guideRec5, guideRec6, guideRec7,
+						guideRec8, guideRec9, guideRec10, guideRec11,
+						guideRec12, guideRec13, guideRec14, guideRec15)
+						[((uint)gid >> 5) & 255u] =
+						MAKE_FLOAT4((float)recCell, (float)recBin, flux, 1.f);
+				guideDbgBuff[2] = 1u;
+			}
 
 			pathInfo->isPassThroughPath = false;
 		}

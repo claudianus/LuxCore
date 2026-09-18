@@ -71,9 +71,17 @@ OCLRenderEngine::OCLRenderEngine(RenderConfigRef rcfg,
 	auto cudaDescs = ctx->GetAvailableDeviceDescriptions();
 	DeviceDescription::Filter(DEVICE_TYPE_CUDA_ALL, cudaDescs);
 
+#if defined(__APPLE__) && !defined(LUXRAYS_DISABLE_METAL)
+	auto metalDescs = ctx->GetAvailableDeviceDescriptions();
+	DeviceDescription::Filter(DEVICE_TYPE_METAL_ALL, metalDescs);
+#endif
+
 	DeviceDescriptions descs;
 	descs.insert(descs.end(), oclDescs.begin(), oclDescs.end());
 	descs.insert(descs.end(), cudaDescs.begin(), cudaDescs.end());
+#if defined(__APPLE__) && !defined(LUXRAYS_DISABLE_METAL)
+	descs.insert(descs.end(), metalDescs.begin(), metalDescs.end());
+#endif
 
 	// Device info
 	bool haveSelectionString = (oclDeviceConfig.length() > 0);
@@ -106,8 +114,8 @@ OCLRenderEngine::OCLRenderEngine(RenderConfigRef rcfg,
 			}
 		} else {
 			if ((useCPUs && (desc.GetType() & DEVICE_TYPE_OPENCL_CPU)) ||
-					(useGPUs && desc.GetType() & (DEVICE_TYPE_OPENCL_GPU | DEVICE_TYPE_CUDA_GPU))) {
-				if (desc.GetType() & (DEVICE_TYPE_OPENCL_GPU | DEVICE_TYPE_CUDA_GPU))
+					(useGPUs && desc.GetType() & (DEVICE_TYPE_OPENCL_GPU | DEVICE_TYPE_CUDA_GPU | DEVICE_TYPE_METAL_GPU))) {
+				if (desc.GetType() & (DEVICE_TYPE_OPENCL_GPU | DEVICE_TYPE_CUDA_GPU | DEVICE_TYPE_METAL_GPU))
 					desc.SetForceWorkGroupSize(forceGPUWorkSize);
 				else if (desc.GetType() & DEVICE_TYPE_OPENCL_CPU)
 					desc.SetForceWorkGroupSize(forceCPUWorkSize);

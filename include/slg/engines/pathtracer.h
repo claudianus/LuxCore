@@ -26,6 +26,7 @@
 #include "slg/film/filmsamplesplatter.h"
 #include "slg/bsdf/bsdf.h"
 #include "slg/engines/caches/photongi/photongicache.h"
+#include "slg/engines/pathguiding.h"
 #include "slg/utils/pathinfo.h"
 
 namespace slg {
@@ -100,6 +101,9 @@ public:
 
 	void SetPhotonGICache(const PhotonGICache *cache) { photonGICache = cache; }
 	const PhotonGICache *GetPhotonGICache() const { return photonGICache; }
+
+	void SetPathGuidingCache(const PathGuidingCache *cache) { pathGuidingCache = cache; }
+	const PathGuidingCache *GetPathGuidingCache() const { return pathGuidingCache; }
 
 	void ParseOptions(
 		luxrays::PropertiesConstRef cfg,
@@ -183,6 +187,22 @@ public:
 	// Option flags
 	bool forceBlackBackground, hybridBackForwardEnable;
 
+	// Hero-wavelength spectral transport (P2-1): when enabled, each path
+	// draws 3 stratified wavelengths and Spectrum channels carry spectral
+	// bins instead of RGB primaries. CPU path engines only.
+	bool spectralEnable;
+
+	// MNEE (Manifold Next Event Estimation) direct light sampling through
+	// delta specular surfaces (Hanika et al. 2015, single specular vertex;
+	// Zeltner et al. 2020 for chains of more than one vertex).
+	bool mneeEnable;
+	u_int mneeMaxIterations;
+	// Maximum number of delta specular vertices in the MNEE chain. 1 selects
+	// the single vertex solver alone (the default: no behavior change), 2 and
+	// more also enable the multi-specular chain that closed glass slabs and
+	// glass balls need.
+	u_int mneeMaxSpecular;
+
 private:
 	void GenerateEyeRay(CameraConstRef camera, FilmConstRef film,
 			luxrays::Ray &eyeRay, PathVolumeInfo &volInfo,
@@ -201,6 +221,43 @@ private:
 	bool CheckDirectHitVisibilityFlags(LightSourceConstRef lightSource,
 			const PathDepthInfo &depthInfo,	const BSDFEvent lastBSDFEvent) const;
 
+	// MNEE: solve the single specular chain x0 -> x1 (delta specular occluder)
+	// -> y (positional delta light) and add the contribution to sampleResult.
+	// Returns true if a contribution was added. See pathtracer_mnee.cpp and
+	// dev-tools/mnee_design.md.
+	bool MNEEDirectSampling(
+			luxrays::IntersectionDeviceRef device,
+			SceneConstRef scene,
+			const float time,
+			const EyePathInfo &pathInfo,
+			const luxrays::Spectrum &pathThrouput,
+			const BSDF &bsdf,
+			LightSourceConstRef light, const float lightPickPdf, const float risScale,
+			const luxrays::Ray &shadowRay, const float directPdfW0,
+			const luxrays::RayHit &shadowRayHit,
+			const BSDF &shadowBsdf, PathVolumeInfo &volInfo,
+			const float u1, const float u2, const float u3, const float u4,
+			SampleResult *sampleResult) const;
+
+	// MNEE, multi-specular variant: solve the chain x0 -> x1 -> ... -> xN
+	// (delta specular occluders) -> y and add the contribution to
+	// sampleResult. Only attempted when the single vertex solve found no
+	// solution. Returns true if a contribution was added. See
+	// pathtracer_mnee.cpp and dev-tools/mnee_design.md section 4b.
+	bool MNEEMultiDirectSampling(
+			luxrays::IntersectionDeviceRef device,
+			SceneConstRef scene,
+			const float time,
+			const EyePathInfo &pathInfo,
+			const luxrays::Spectrum &pathThrouput,
+			const BSDF &bsdf,
+			LightSourceConstRef light, const float lightPickPdf, const float risScale,
+			const luxrays::Ray &shadowRay, const float directPdfW0,
+			const luxrays::RayHit &shadowRayHit,
+			const BSDF &shadowBsdf, PathVolumeInfo &volInfo,
+			const float u1, const float u2, const float u3, const float u4,
+			SampleResult *sampleResult) const;
+
 	// RenderLightSample methods
 
 	void ConnectToEye(luxrays::IntersectionDeviceRef device,
@@ -213,6 +270,13 @@ private:
 
 	FilterDistribution *pixelFilterDistribution;
 	const PhotonGICache *photonGICache;
+	// Path guiding (P1-3 M1 CPU; M2b GPU): owned by the engine, shared by
+	// all render threads (lock-free inside). Null when disabled.
+	const PathGuidingCache *pathGuidingCache;
+	// Guiding on/off (path.guiding.enable) + frozen table file for GPU
+	// sampling (path.guiding.tablefile, empty = inline CPU training).
+	bool guidingEnable;
+	std::string guidingTableFile;
 
 	static const Film::FilmChannels eyeSampleResultsChannels;
 	static const Film::FilmChannels lightSampleResultsChannels;

@@ -19,6 +19,7 @@
 #if !defined(LUXRAYS_DISABLE_OPENCL)
 
 #include "slg/engines/pathoclbase/compiledscene.h"
+#include "slg/lights/strategies/restirdi.h"
 
 using namespace std;
 using namespace luxrays;
@@ -43,6 +44,48 @@ void CompiledScene::CompilePathTracer() {
 	compiledPathTracer.hybridBackForward.glossinessThreshold = pathTracer->hybridBackForwardGlossinessThreshold;
 	
 	compiledPathTracer.forceBlackBackground = pathTracer->forceBlackBackground;
+
+	// Hero-wavelength spectral transport: the kernel-side path wavelengths
+	// live in SampleResult/HitPoint; the extra boot dimension comes from
+	// IDX_WAVELENGTH (sampler_types.cl) under -D SLG_SPECTRAL.
+	compiledPathTracer.spectralEnable = pathTracer->spectralEnable;
+
+	// MNEE specular caustics (pathtracer_mnee.cpp): the kernel port runs the
+	// same single vertex solver (path.mnee.enable / path.mnee.maxiterations).
+	// The multi-specular chain port (MNEEMultiDirectSampling, MNEE_PHASE_MS_*
+	// in pathoclbase_funcs.cl) is validated against the CPU on the closed
+	// glass slab (PATHOCL MS mean within 0.9% of PATHCPU MS and 0.07% of
+	// light tracing; the earlier value shortfall was a reproject mint
+	// mismatch, fixed for CPU parity in MneeChain_WriteReprojectRay).
+	// maxSpecular is forwarded so the chain solver runs.
+	compiledPathTracer.mnee.enabled = pathTracer->mneeEnable;
+	compiledPathTracer.mnee.maxIterations = pathTracer->mneeMaxIterations;
+	compiledPathTracer.mnee.maxSpecular = pathTracer->mneeMaxSpecular;
+	if (pathTracer->mneeEnable && (pathTracer->mneeMaxSpecular > 1))
+		SLG_LOG("WARNING: path.mnee.maxspecular = " << pathTracer->mneeMaxSpecular <<
+				" (multi-specular MNEE chains) is supported by the GPU kernels "
+				"(validated against PATHCPU on the closed glass slab, "
+				"see dev-tools/sota_p1_mnee_ms_test.py).");
+
+	// ReSTIR DI: enable the kernel-side RIS reservoir when the scene's
+	// illuminate light strategy is the ReSTIR one. The proposal q is the
+	// already compiled lightsDistribution (LogPower); the kernel uses it
+	// as the proposal of the reservoir. The candidate count mirrors the
+	// CPU adaptive heuristic (restirdi.cpp Preprocess()).
+	const auto& illuminateStrategy = scene.GetLightSources().GetIlluminateLightStrategy();
+	const auto restirStrategy =
+		dynamic_cast<const LightStrategyRestirDI *>(&illuminateStrategy);
+	if (restirStrategy) {
+		compiledPathTracer.restir.enabled = true;
+		compiledPathTracer.restir.candidateCount =
+			restirStrategy->GetEffectiveCandidateCount();
+		compiledPathTracer.restir.temporalEnable =
+			restirStrategy->IsTemporalReuseEnabled();
+	} else {
+		compiledPathTracer.restir.enabled = false;
+		compiledPathTracer.restir.candidateCount = 0;
+		compiledPathTracer.restir.temporalEnable = false;
+	}
 
 	CompilePhotonGI();
 

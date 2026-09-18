@@ -99,6 +99,23 @@ protected:
 	slg::ocl::Filter *oclPixelFilter;
 	PhotonGICache *photonGICache;
 
+	// Path guiding (P1-3 M2b): frozen table uploaded to GPU (read-only).
+	// Coarse layout shared with PathGuidingCache::SnapshotCoarseTable:
+	// 16 chunks of 32 cells x (32 bins + total); small uploads land
+	// reliably on all backends. Empty when guiding is off (kernels run
+	// unguided); with guiding on but no table file, trains from scratch.
+	static const u_int GUIDE_CHUNKS = PathGuidingCache::COARSE_CHUNKS;
+	static const u_int GUIDE_CHUNK_CELLS = PathGuidingCache::COARSE_CHUNK_CELLS;
+	static const u_int GUIDE_COARSE_BINS = PathGuidingCache::COARSE_BINS;
+	// One vector, 16 contiguous segments of 32*(32+1) floats each
+	std::vector<float> guideTable;
+	float guideCubeMin[3];
+	float guideCubeSize;
+	bool guideHasTable;
+	// Path guiding (P1-3 M2b-2): CPU-side training cache drained from the
+	// GPU record buffer every round (owned here, single-threaded drain)
+	PathGuidingCache *guideCache;
+
 	std::shared_ptr<SamplerSharedData> lightSamplerSharedData;
 };
 

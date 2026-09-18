@@ -20,6 +20,8 @@
 
 #include <boost/lexical_cast.hpp>
 #include <boost/algorithm/string/replace.hpp>
+#include <cstdio>
+#include <vector>
 
 #include "luxrays/core/geometry/transform.h"
 #include "luxrays/utils/ocl.h"
@@ -65,6 +67,7 @@ PathOCLBaseOCLRenderThread::PathOCLBaseOCLRenderThread(const u_int index,
 	textureEvalOpsBuff = nullptr;
 	textureEvalStackBuff = nullptr;
 	meshDescsBuff = nullptr;
+	meshIDBuff = nullptr;
 	scnObjsBuff = nullptr;
 	lightsBuff = nullptr;
 	envLightIndicesBuff = nullptr;
@@ -98,6 +101,11 @@ PathOCLBaseOCLRenderThread::PathOCLBaseOCLRenderThread(const u_int index,
 	pgicRadiancePhotonsBVHNodesBuff = nullptr;
 	pgicCausticPhotonsBuff = nullptr;
 	pgicCausticPhotonsBVHNodesBuff = nullptr;
+	guideDbgBuff = nullptr;
+	for (u_int i = 0u; i < 16u; ++i)
+		guideRecBuff[i] = nullptr;
+	for (u_int i = 0u; i < 16u; ++i)
+		guideChunkBuff[i] = nullptr;
 
 	// OpenCL task related buffers
 	raysBuff = nullptr;
@@ -112,6 +120,7 @@ PathOCLBaseOCLRenderThread::PathOCLBaseOCLRenderThread(const u_int index,
 	sampleResultsBuff = nullptr;
 	taskStatsBuff = nullptr;
 	eyePathInfosBuff = nullptr;
+	restirReservoirsBuff = nullptr;
 	directLightVolInfosBuff = nullptr;
 	pixelFilterBuff = nullptr;
 
@@ -124,6 +133,7 @@ PathOCLBaseOCLRenderThread::PathOCLBaseOCLRenderThread(const u_int index,
 	advancePathsKernel_MK_RT_DL = nullptr;
 	advancePathsKernel_MK_DL_ILLUMINATE = nullptr;
 	advancePathsKernel_MK_DL_SAMPLE_BSDF = nullptr;
+	advancePathsKernel_MK_MNEE_NEXT_VERTEX = nullptr;
 	advancePathsKernel_MK_GENERATE_NEXT_VERTEX_RAY = nullptr;
 	advancePathsKernel_MK_SPLAT_SAMPLE = nullptr;
 	advancePathsKernel_MK_NEXT_SAMPLE = nullptr;
@@ -146,8 +156,17 @@ PathOCLBaseOCLRenderThread::~PathOCLBaseOCLRenderThread() {
 void PathOCLBaseOCLRenderThread::Start() {
 	started = true;
 
-	InitRender();
-	StartRenderThread();
+	try {
+		InitRender();
+		StartRenderThread();
+	} catch (...) {
+		// Kernel compilation may have failed before any buffer existed:
+		// leave the thread "not started" so the destructor does not run
+		// the full teardown (film transfer/buffer frees) over a
+		// half-initialized thread.
+		started = false;
+		throw;
+	}
 }
 
 void PathOCLBaseOCLRenderThread::Interrupt() {
@@ -158,54 +177,26 @@ void PathOCLBaseOCLRenderThread::Interrupt() {
 void PathOCLBaseOCLRenderThread::Stop() {
 	StopRenderThread();
 
-	// Transfer the films
-	TransferThreadFilms(intersectionDevice);
-	FreeThreadFilmsOCLBuffers();
-
-	// Scene buffers
-	intersectionDevice.FreeBuffer(&materialsBuff);
-	intersectionDevice.FreeBuffer(&materialEvalOpsBuff);
-	intersectionDevice.FreeBuffer(&materialEvalStackBuff);
-	intersectionDevice.FreeBuffer(&texturesBuff);
-	intersectionDevice.FreeBuffer(&textureEvalOpsBuff);
-	intersectionDevice.FreeBuffer(&textureEvalStackBuff);
-	intersectionDevice.FreeBuffer(&meshDescsBuff);
-	intersectionDevice.FreeBuffer(&scnObjsBuff);
-	intersectionDevice.FreeBuffer(&normalsBuff);
-	intersectionDevice.FreeBuffer(&triNormalsBuff);
-	intersectionDevice.FreeBuffer(&uvsBuff);
-	intersectionDevice.FreeBuffer(&colsBuff);
-	intersectionDevice.FreeBuffer(&alphasBuff);
-	intersectionDevice.FreeBuffer(&triAOVBuff);
-	intersectionDevice.FreeBuffer(&trianglesBuff);
-	intersectionDevice.FreeBuffer(&interpolatedTransformsBuff);
-	intersectionDevice.FreeBuffer(&vertsBuff);
-	intersectionDevice.FreeBuffer(&lightsBuff);
-	intersectionDevice.FreeBuffer(&envLightIndicesBuff);
-	intersectionDevice.FreeBuffer(&lightsDistributionBuff);
-	intersectionDevice.FreeBuffer(&infiniteLightSourcesDistributionBuff);
-	intersectionDevice.FreeBuffer(&dlscAllEntriesBuff);
-	intersectionDevice.FreeBuffer(&dlscDistributionsBuff);
-	intersectionDevice.FreeBuffer(&dlscBVHNodesBuff);
-	intersectionDevice.FreeBuffer(&elvcAllEntriesBuff);
-	intersectionDevice.FreeBuffer(&elvcDistributionsBuff);
-	intersectionDevice.FreeBuffer(&elvcTileDistributionOffsetsBuff);
-	intersectionDevice.FreeBuffer(&elvcBVHNodesBuff);
-	intersectionDevice.FreeBuffer(&envLightDistributionsBuff);
-	intersectionDevice.FreeBuffer(&cameraBuff);
-	intersectionDevice.FreeBuffer(&cameraBokehDistributionBuff);
-	intersectionDevice.FreeBuffer(&lightIndexOffsetByMeshIndexBuff);
-	intersectionDevice.FreeBuffer(&lightIndexByTriIndexBuff);
-	intersectionDevice.FreeBuffer(&imageMapDescsBuff);
-
-	for (u_int i = 0; i < imageMapsBuff.size(); ++i)
-		intersectionDevice.FreeBuffer(&imageMapsBuff[i]);
-	imageMapsBuff.resize(0);
+	// Guiding stats (try/ok accumulators for validation)
+	if (guideDbgBuff) {
+		u_int counts[2] = {0u, 0u};
+		intersectionDevice.EnqueueReadBuffer(guideDbgBuff, CL_TRUE, 2 * sizeof(u_int), counts);
+		FILE *f = fopen("/tmp/pgcount.txt", "a");
+		if (f) {
+			fprintf(f, "try=%u ok=%u\n", counts[0], counts[1]);
+			fclose(f);
+		}
+	}
 	intersectionDevice.FreeBuffer(&pgicRadiancePhotonsBuff);
 	intersectionDevice.FreeBuffer(&pgicRadiancePhotonsValuesBuff);
 	intersectionDevice.FreeBuffer(&pgicRadiancePhotonsBVHNodesBuff);
 	intersectionDevice.FreeBuffer(&pgicCausticPhotonsBuff);
 	intersectionDevice.FreeBuffer(&pgicCausticPhotonsBVHNodesBuff);
+	for (u_int i = 0u; i < 16u; ++i)
+		intersectionDevice.FreeBuffer(&guideChunkBuff[i]);
+	intersectionDevice.FreeBuffer(&guideDbgBuff);
+	for (u_int i = 0u; i < 16u; ++i)
+		intersectionDevice.FreeBuffer(&guideRecBuff[i]);
 
 	// OpenCL task related buffers
 	intersectionDevice.FreeBuffer(&raysBuff);
@@ -220,8 +211,53 @@ void PathOCLBaseOCLRenderThread::Stop() {
 	intersectionDevice.FreeBuffer(&sampleResultsBuff);
 	intersectionDevice.FreeBuffer(&taskStatsBuff);
 	intersectionDevice.FreeBuffer(&eyePathInfosBuff);
+	intersectionDevice.FreeBuffer(&restirReservoirsBuff);
 	intersectionDevice.FreeBuffer(&directLightVolInfosBuff);
 	intersectionDevice.FreeBuffer(&pixelFilterBuff);
+
+	// Compiled-scene buffers. These are allocated by the Init*() functions
+	// (InitRender()/EndSceneEdit()) and persist across scene edits, so they are
+	// only released here at full teardown - otherwise every render leaks the
+	// whole uploaded scene (geometry, materials, textures, lights, image maps).
+	intersectionDevice.FreeBuffer(&vertsBuff);
+	intersectionDevice.FreeBuffer(&normalsBuff);
+	intersectionDevice.FreeBuffer(&triNormalsBuff);
+	intersectionDevice.FreeBuffer(&uvsBuff);
+	intersectionDevice.FreeBuffer(&colsBuff);
+	intersectionDevice.FreeBuffer(&alphasBuff);
+	intersectionDevice.FreeBuffer(&vertexAOVBuff);
+	intersectionDevice.FreeBuffer(&triAOVBuff);
+	intersectionDevice.FreeBuffer(&trianglesBuff);
+	intersectionDevice.FreeBuffer(&interpolatedTransformsBuff);
+	intersectionDevice.FreeBuffer(&meshDescsBuff);
+	intersectionDevice.FreeBuffer(&meshIDBuff);
+	intersectionDevice.FreeBuffer(&scnObjsBuff);
+	intersectionDevice.FreeBuffer(&cameraBuff);
+	intersectionDevice.FreeBuffer(&cameraBokehDistributionBuff);
+	intersectionDevice.FreeBuffer(&materialsBuff);
+	intersectionDevice.FreeBuffer(&materialEvalOpsBuff);
+	intersectionDevice.FreeBuffer(&materialEvalStackBuff);
+	intersectionDevice.FreeBuffer(&texturesBuff);
+	intersectionDevice.FreeBuffer(&textureEvalOpsBuff);
+	intersectionDevice.FreeBuffer(&textureEvalStackBuff);
+	intersectionDevice.FreeBuffer(&lightsBuff);
+	intersectionDevice.FreeBuffer(&envLightIndicesBuff);
+	intersectionDevice.FreeBuffer(&lightIndexOffsetByMeshIndexBuff);
+	intersectionDevice.FreeBuffer(&lightIndexByTriIndexBuff);
+	intersectionDevice.FreeBuffer(&envLightDistributionsBuff);
+	intersectionDevice.FreeBuffer(&lightsDistributionBuff);
+	intersectionDevice.FreeBuffer(&infiniteLightSourcesDistributionBuff);
+	intersectionDevice.FreeBuffer(&dlscAllEntriesBuff);
+	intersectionDevice.FreeBuffer(&dlscDistributionsBuff);
+	intersectionDevice.FreeBuffer(&dlscBVHNodesBuff);
+	intersectionDevice.FreeBuffer(&elvcAllEntriesBuff);
+	intersectionDevice.FreeBuffer(&elvcDistributionsBuff);
+	intersectionDevice.FreeBuffer(&elvcTileDistributionOffsetsBuff);
+	intersectionDevice.FreeBuffer(&elvcBVHNodesBuff);
+	intersectionDevice.FreeBuffer(&imageMapDescsBuff);
+	for (HardwareDeviceBuffer *&b : imageMapsBuff)
+		intersectionDevice.FreeBuffer(&b);
+	imageMapsBuff.clear();
 
 	started = false;
 

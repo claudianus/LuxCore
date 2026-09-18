@@ -136,7 +136,7 @@ static void PGICUpdateCallBack(CompiledScene *compiledScene) {
 }
 
 void TilePathOCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
-	//SLG_LOG("[TilePathOCLRenderThread::" << threadIndex << "] Rendering thread started");
+	SLG_LOG("[TilePathOCLRenderThread::" << threadIndex << "] Rendering thread started");
 
 	TilePathOCLRenderEngine *engine = (TilePathOCLRenderEngine *)renderEngine;
 

@@ -50,7 +50,14 @@ typedef enum {
 	MK_SPLAT_SAMPLE = 7,
 	MK_NEXT_SAMPLE = 8,
 	MK_GENERATE_CAMERA_RAY = 9,
-	MK_DONE = 10
+	MK_DONE = 10,
+	// MNEE (Manifold Next Event Estimation) sub-state machine: solves the
+	// specular chain x0 -> x1 -> y after the direct light shadow ray was
+	// blocked by a delta specular surface. One trace per render iteration:
+	// the state kernel writes the next trace ray into rays[] (with
+	// needsTrace = 1), the RT kernel traces it, the state kernel consumes
+	// rayHits[] on the next dispatch (needsTrace is cleared there).
+	MK_MNEE_NEXT_VERTEX = 11
 } PathState;
 
 typedef struct {
@@ -83,7 +90,30 @@ typedef struct {
 	Spectrum lightIrradiance;
 
 	unsigned int lightID;
+
+	// RIS output weight (ReSTIR DI): carries the resampling factor
+	// wSum / (M * target) of the reservoir pick. The direct light
+	// sampling pdf stays the proposal q (for MIS consistency with the
+	// direct-hit side); the RIS factor multiplies the final factor in
+	// DirectLight_BSDFSampling(). Always 1.f when ReSTIR is disabled.
+	float risScale;
 } DirectLightIlluminateInfo;
+
+// ReSTIR DI per-pixel reservoir state for temporal reuse (persisted
+// across passes within a render session). The wSum/M/target triple is
+// the REAL accumulated state of that pixel's last depth-0 reservoir:
+// merging a stored reservoir with "wSum_new + wSum_prev" over
+// "M_new + M_prev" draws is the same RIS as if all proposal draws had
+// happened at once (same proposal q, same target family), so the
+// combined estimator stays unbiased. "wSum_prev = M_prev * target"
+// instead would correlate the merge weight with the stored sample and
+// bias the estimator.
+typedef struct {
+	unsigned int lightIndex;	// NULL_INDEX when there is no reservoir yet
+	float wSum;					// sum of the target weights of all draws
+	unsigned int M;				// total number of proposal draws
+	float target;				// target weight of the winning sample
+} RestirReservoir;
 
 // The state used to keep track of the rendered path
 typedef struct {
@@ -93,6 +123,10 @@ typedef struct {
 	BSDF bsdf; // Variable size structure
 
 	Seed seedPassThroughEvent;
+
+	// Path guiding (P1-3 M2b-2): vertex-start accumulated radiance
+	// (direct+emission channels) for incident-value training records
+	float guideRadStart[3];
 	
 	int albedoToDo, photonGICacheEnabledOnLastHit,
 			photonGICausticCacheUsed, photonGIShowIndirectPathMixUsed,
@@ -104,6 +138,150 @@ typedef enum {
 	ILLUMINATED, SHADOWED, NOT_VISIBLE
 } DirectLightResult;
 
+// MNEE chain sub-phase (see MK_MNEE_NEXT_VERTEX):
+// - MNEE_PHASE_SEED_TRACE: rays[] holds the mirrored-light seed trace
+//   (mirror materials only), not consumed yet.
+// - MNEE_PHASE_STEP: no trace pending. Evaluate the constraint at the
+//   current vertex, check convergence, compute the Newton step and write
+//   the next proposal ray.
+// - MNEE_PHASE_PROP_TRACE: rays[] holds a Newton proposal trace, not
+//   consumed yet.
+// - MNEE_PHASE_SEG2_TRACE: the solve ended; rays[] holds the x1 -> y
+//   shadow trace, not consumed yet.
+// - MNEE_PHASE_CONTRIBUTION: the seg2 trace is visible; assemble the
+//   contribution (arithmetic only, runs in the same launch that consumed
+//   the seg2 trace).
+// - MNEE_PHASE_MS_DISCOVER: rays[] holds the straight-ray trace that
+//   discovers chain vertex chainN (multi-specular chain;
+//   MNEEMultiDirectSampling port). chainN vertices are stored so far.
+// - MNEE_PHASE_MS_JACPERT: rays[] holds the re-projection of the FD
+//   perturbation of vertex chainIdx along axis chainSub (0 = s, 1 = t).
+// - MNEE_PHASE_MS_TRIAL: rays[] holds the re-projection of the line
+//   search trial position of vertex chainIdx.
+// - MNEE_PHASE_MS_COMMIT: rays[] holds the re-projection that rebuilds
+//   the accepted trial position of vertex chainIdx.
+// - MNEE_PHASE_MS_POST: rays[] holds the final re-projection of vertex
+//   chainIdx for the post-solve mode check, the specular factor and the
+//   volume update.
+typedef enum {
+	MNEE_PHASE_SEED_TRACE = 0,
+	MNEE_PHASE_STEP = 1,
+	MNEE_PHASE_PROP_TRACE = 2,
+	MNEE_PHASE_SEG2_TRACE = 3,
+	MNEE_PHASE_CONTRIBUTION = 4,
+	MNEE_PHASE_MS_DISCOVER = 5,
+	MNEE_PHASE_MS_JACPERT = 6,
+	MNEE_PHASE_MS_TRIAL = 7,
+	MNEE_PHASE_MS_COMMIT = 8,
+	MNEE_PHASE_MS_POST = 9
+} MneePhase;
+
+// Multi-specular chain capacity (CPU MNEE_MS_MAX_VERTICES, the upper bound
+// of path.mnee.maxspecular).
+#define MNEE_MS_MAX_VERTICES 4
+
+// 2-vector / 2x2 block with scalar members: OpenCL vector types do not exist
+// in the host C++ compile of this file (same reason MneeVertex above uses
+// component floats). Kernel code converts to float2/float4 at use sites.
+typedef struct {
+	float x, y;
+} MneeVec2T;
+
+typedef struct {
+	float x, y, z, w;
+} MneeMat2T;
+
+// The specular chain vertex on the caustic caster surface (the kernel port
+// of MneeVertex in pathtracer_mnee.cpp). Component floats instead of
+// float3: this file is also compiled as C++ on the host for the buffer
+// size computation, and OpenCL vector types do not exist there (they would
+// also introduce backend-dependent padding).
+typedef struct {
+	float px, py, pz;
+	float dpduX, dpduY, dpduZ;
+	float dpdvX, dpdvY, dpdvZ;
+	float nX, nY, nZ;
+	float gnX, gnY, gnZ;
+	float dnduX, dnduY, dnduZ;
+	float dndvX, dndvY, dndvZ;
+	// Orthonormal tangents (Zeltner make_orthonormal result)
+	float sX, sY, sZ;
+	float tX, tY, tZ;
+	// Generalized half-vector IOR ratio: +1 same-side mirror reflection,
+	// -1 opposite-side mirror reflection, nt/nc for glass transmission.
+	float eta;
+} MneeVertex;
+
+// Persistent MNEE state, one per task (lives in GPUTaskDirectLight). It
+// carries the whole Newton/line-search state across the micro-kernel
+// launches of the MNEE sub-state machine.
+typedef struct {
+	MneePhase phase;
+	// Skip the next processing launch: a new trace ray has just been
+	// written into rays[] by the current iteration, so rayHits[] still
+	// holds the result of the previous trace.
+	int needsTrace;
+
+	float lightPosX, lightPosY, lightPosZ;
+	unsigned int shadowMeshIndex;
+	// 1 = mirror occluder (eta = ±1 by the side test), 0 = glass occluder
+	int mirrorMode;
+
+	MneeVertex vtx;
+
+	// Newton / line search state
+	float beta;
+	unsigned int iteration;
+	float resNorm;
+
+	// Multi-specular chain state (MNEEMultiDirectSampling port). chainN ==
+	// 0 selects the single vertex solver above; chainN >= 2 an N-vertex
+	// chain in chainVtx. Adds ~1.2KB per task (GPUTaskDirectLight is sized
+	// from this struct on the host); acceptable on the Metal validation
+	// machine, revisit with a pooled scratch buffer for small VRAM.
+	int chainN;
+	int chainMaxV;
+	MneeVertex chainVtx[MNEE_MS_MAX_VERTICES];
+	// Kernel material type (MIRROR/GLASS) per chain vertex, used by the
+	// trial re-projection check and the post-solve mode check.
+	unsigned int chainMatType[MNEE_MS_MAX_VERTICES];
+	// Block tridiagonal FD Jacobian (prev/cur/next per vertex) and the
+	// base residuals, filled by the MS_JACPERT phases and reused by the
+	// geometric term (same vertex, so identical to a fresh evaluation).
+	MneeMat2T chainJacPrev[MNEE_MS_MAX_VERTICES];
+	MneeMat2T chainJacCur[MNEE_MS_MAX_VERTICES];
+	MneeMat2T chainJacNxt[MNEE_MS_MAX_VERTICES];
+	MneeVec2T chainRes[MNEE_MS_MAX_VERTICES];
+	MneeVec2T chainTrialRes[MNEE_MS_MAX_VERTICES];
+	MneeVec2T chainDx[MNEE_MS_MAX_VERTICES];
+	// Phase cursors (vertex index / perturbation axis) and the trial
+	// projection flag.
+	int chainIdx;
+	int chainSub;
+	int chainProjected;
+	// Accumulated specular product over the MS_POST phases.
+	float chainSpecR, chainSpecG, chainSpecB;
+
+	// Solve-end results consumed by the contribution launch
+	float specFactorR, specFactorG, specFactorB;
+	float geometricTerm;
+	// BSDFEvent kept as int: this file is also compiled as C++ on the host
+	// for the buffer size computation, where the kernel BSDFEvent enum is
+	// not visible.
+	int specEvent;
+	// 1 when the solved constraint is the plain half-vector (vertex eta == 1,
+	// the same-side reflection case): only then does the light weight carry
+	// the r12^2 (directPdfW2) measure factor. Any eta != 1 (dielectric
+	// transmission, opposite-side mirror law) makes the analytic geometric
+	// term carry the full measure conversion instead.
+	int plainHalfVector;
+	float lightRadiance2R, lightRadiance2G, lightRadiance2B;
+	float directPdfW2;
+	// Pass-through event of the x1 -> y shadow trace (hashed, kept across
+	// the launch boundary)
+	float seg2PassThrough;
+} MneeState;
+
 typedef struct {
 	// Used to store some intermediate result
 	DirectLightIlluminateInfo illumInfo;
@@ -114,6 +292,13 @@ typedef struct {
 
 	// The shadow transparency flag used by Scene_Intersect()
 	int throughShadowTransparency;
+
+	// MNEE specular chain solver state (MK_MNEE_NEXT_VERTEX) and the two
+	// BSDF slots it needs: mneeBsdf is the trace target of the in-flight
+	// MNEE proposal, mneeBsdfFinal is the BSDF of the current chain vertex
+	// (the accepted proposal, the seed trace or the shadow-ray occluder).
+	BSDF mneeBsdf, mneeBsdfFinal;
+	MneeState mnee;
 } GPUTaskDirectLight;
 
 typedef struct {

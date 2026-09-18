@@ -17,6 +17,7 @@
  ***************************************************************************/
 
 #include "luxrays/usings.h"
+#include <cstdio>
 #include <limits>
 #if !defined(LUXRAYS_DISABLE_OPENCL)
 
@@ -27,6 +28,9 @@
 #include "luxrays/core/geometry/transform.h"
 #include "luxrays/utils/ocl.h"
 #include "luxrays/devices/ocldevice.h"
+#if defined(__APPLE__) && !defined(LUXRAYS_DISABLE_METAL)
+#include "luxrays/devices/metaldevice.h"
+#endif
 #include "luxrays/kernels/kernels.h"
 
 #include "luxcore/cfg.h"
@@ -71,13 +75,16 @@ void PathOCLBaseOCLRenderThread::GetKernelParamters(
 	std::vector<std::string> &params,
 	HardwareIntersectionDeviceRef intersectionDevice,
 	const string renderEngineType,
-	const float epsilonMin, const float epsilonMax
+	const float epsilonMin, const float epsilonMax,
+	const bool spectralEnable
 ) {
 	params.push_back("-D LUXRAYS_OPENCL_KERNEL");
 	params.push_back("-D SLG_OPENCL_KERNEL");
 	params.push_back("-D RENDER_ENGINE_" + renderEngineType);
 	params.push_back("-D PARAM_RAY_EPSILON_MIN=" + ToString(epsilonMin) + "f");
 	params.push_back("-D PARAM_RAY_EPSILON_MAX=" + ToString(epsilonMax) + "f");
+	if (spectralEnable)
+		params.push_back("-D SLG_SPECTRAL");
 
 	try {
 		const auto& oclDeviceDesc =
@@ -89,7 +96,16 @@ void PathOCLBaseOCLRenderThread::GetKernelParamters(
 		else
 			params.push_back("-D LUXCORE_GENERIC_OPENCL");
 	}
-	catch (std::bad_cast&) {}
+	catch (std::bad_cast&) {
+#if defined(__APPLE__) && !defined(LUXRAYS_DISABLE_METAL)
+		try {
+			dynamic_cast<MetalDeviceDescriptionConstRef>(
+				intersectionDevice.GetDeviceDesc());
+			params.push_back("-D LUXCORE_METAL");
+		}
+		catch (std::bad_cast&) {}
+#endif
+	}
 }
 
 string PathOCLBaseOCLRenderThread::GetKernelSources() {
@@ -152,6 +168,9 @@ string PathOCLBaseOCLRenderThread::GetKernelSources() {
 			slg::ocl::KernelSource_dlsc_types <<
 			slg::ocl::KernelSource_elvc_types <<
 			slg::ocl::KernelSource_pgic_types <<
+			// Spectral helpers/tables must precede every consumer
+			// (hitpoint funcs, texture eval ops, materials, film splat)
+			slg::ocl::KernelSource_spectral_funcs <<
 			// OpenCL SLG Funcs
 			slg::ocl::KernelSource_mortoncurve_funcs <<
 			slg::ocl::KernelSource_evalstack_funcs <<
@@ -181,6 +200,7 @@ string PathOCLBaseOCLRenderThread::GetKernelSources() {
 			slg::ocl::KernelSource_texture_imagemap_funcs <<
 			slg::ocl::KernelSource_texture_others_funcs <<
 			slg::ocl::KernelSource_texture_random_funcs <<
+			slg::ocl::KernelSource_texture_whitenoise_funcs <<
 			slg::ocl::KernelSource_texture_funcs_evalops <<
 			slg::ocl::KernelSource_texture_funcs;
 
@@ -197,6 +217,7 @@ string PathOCLBaseOCLRenderThread::GetKernelSources() {
 			slg::ocl::KernelSource_materialdefs_funcs_glossy2 <<
 			slg::ocl::KernelSource_materialdefs_funcs_glossycoating <<
 			slg::ocl::KernelSource_materialdefs_funcs_glossytranslucent <<
+			slg::ocl::KernelSource_materialdefs_funcs_hair <<
 			slg::ocl::KernelSource_materialdefs_funcs_heterogeneousvol <<
 			slg::ocl::KernelSource_materialdefs_funcs_homogeneousvol <<
 			slg::ocl::KernelSource_materialdefs_funcs_matte <<
@@ -240,6 +261,7 @@ string PathOCLBaseOCLRenderThread::GetKernelSources() {
 			slg::ocl::KernelSource_sampler_sobol_funcs <<
 			slg::ocl::KernelSource_sampler_metropolis_funcs <<
 			slg::ocl::KernelSource_sampler_tilepath_funcs <<
+			slg::ocl::KernelSource_sampler_pmj02_funcs <<
 			slg::ocl::KernelSource_sampler_funcs <<
 			slg::ocl::KernelSource_bsdf_funcs <<
 			slg::ocl::KernelSource_scene_funcs <<
@@ -275,7 +297,8 @@ void PathOCLBaseOCLRenderThread::InitKernels() {
 	vector<string> kernelsParameters;
 	GetKernelParamters(kernelsParameters, intersectionDevice,
 			RenderEngine::RenderEngineType2String(renderEngine->GetType()),
-			MachineEpsilon::GetMin(), MachineEpsilon::GetMax());
+			MachineEpsilon::GetMin(), MachineEpsilon::GetMax(),
+			renderEngine->pathTracer.spectralEnable);
 
 	const string kernelSource = GetKernelSources();
 
@@ -332,6 +355,7 @@ void PathOCLBaseOCLRenderThread::InitKernels() {
 		{advancePathsKernel_MK_RT_DL, "AdvancePaths_MK_RT_DL"},
 		{advancePathsKernel_MK_DL_ILLUMINATE, "AdvancePaths_MK_DL_ILLUMINATE"},
 		{advancePathsKernel_MK_DL_SAMPLE_BSDF, "AdvancePaths_MK_DL_SAMPLE_BSDF"},
+		{advancePathsKernel_MK_MNEE_NEXT_VERTEX, "AdvancePaths_MK_MNEE_NEXT_VERTEX"},
 		{advancePathsKernel_MK_GENERATE_NEXT_VERTEX_RAY, "AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY"},
 		{advancePathsKernel_MK_SPLAT_SAMPLE, "AdvancePaths_MK_SPLAT_SAMPLE"},
 		{advancePathsKernel_MK_NEXT_SAMPLE, "AdvancePaths_MK_NEXT_SAMPLE"},
@@ -377,6 +401,7 @@ void PathOCLBaseOCLRenderThread::SetInitKernelArgs(const u_int filmIndex) {
 	intersectionDevice.SetKernelArg(initKernel, argIndex++, sampleDataBuff);
 	intersectionDevice.SetKernelArg(initKernel, argIndex++, sampleResultsBuff);
 	intersectionDevice.SetKernelArg(initKernel, argIndex++, eyePathInfosBuff);
+	intersectionDevice.SetKernelArg(initKernel, argIndex++, restirReservoirsBuff);
 	intersectionDevice.SetKernelArg(initKernel, argIndex++, pixelFilterBuff);
 	intersectionDevice.SetKernelArg(initKernel, argIndex++, raysBuff);
 	intersectionDevice.SetKernelArg(initKernel, argIndex++, cameraBuff);
@@ -405,6 +430,7 @@ void PathOCLBaseOCLRenderThread::SetAdvancePathsKernelArgs(
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, sampleDataBuff);
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, sampleResultsBuff);
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, eyePathInfosBuff);
+	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, restirReservoirsBuff);
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, directLightVolInfosBuff);
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, raysBuff);
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, hitsBuff);
@@ -478,6 +504,23 @@ void PathOCLBaseOCLRenderThread::SetAdvancePathsKernelArgs(
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, pgicRadiancePhotonsBVHNodesBuff);
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, pgicCausticPhotonsBuff);
 	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, pgicCausticPhotonsBVHNodesBuff);
+
+	// Path guiding (P1-3 M2b): 16 frozen coarse-table chunks (4224B each;
+	// small uploads land reliably) + field bounds + enable. Chunks are
+	// null (and guidingEnable 0) when unguided; kernels must not
+	// dereference them then (gated on guidingEnable).
+	for (u_int i = 0u; i < 16u; ++i)
+		intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, guideChunkBuff[i]);
+	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, renderEngine->guideHasTable ? 1u : 0u);
+	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, renderEngine->guideCubeMin[0]);
+	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, renderEngine->guideCubeMin[1]);
+	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, renderEngine->guideCubeMin[2]);
+	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, renderEngine->guideCubeSize);
+	// Guiding stats buffer
+	intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, guideDbgBuff);
+	// Path guiding (P1-3 M2b-2): 16 training-record buffers (4KB each)
+	for (u_int i = 0u; i < 16u; ++i)
+		intersectionDevice.SetKernelArg(advancePathsKernel, argIndex++, guideRecBuff[i]);
 }
 
 void PathOCLBaseOCLRenderThread::SetAllAdvancePathsKernelArgs(const u_int filmIndex) {
@@ -493,6 +536,8 @@ void PathOCLBaseOCLRenderThread::SetAllAdvancePathsKernelArgs(const u_int filmIn
 		SetAdvancePathsKernelArgs(advancePathsKernel_MK_DL_ILLUMINATE, filmIndex);
 	if (advancePathsKernel_MK_DL_SAMPLE_BSDF)
 		SetAdvancePathsKernelArgs(advancePathsKernel_MK_DL_SAMPLE_BSDF, filmIndex);
+	if (advancePathsKernel_MK_MNEE_NEXT_VERTEX)
+		SetAdvancePathsKernelArgs(advancePathsKernel_MK_MNEE_NEXT_VERTEX, filmIndex);
 	if (advancePathsKernel_MK_GENERATE_NEXT_VERTEX_RAY)
 		SetAdvancePathsKernelArgs(advancePathsKernel_MK_GENERATE_NEXT_VERTEX_RAY, filmIndex);
 	if (advancePathsKernel_MK_SPLAT_SAMPLE)
@@ -539,6 +584,13 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsKernel() {
 	intersectionDevice.EnqueueKernel(advancePathsKernel_MK_DL_ILLUMINATE,
 			HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
 	intersectionDevice.EnqueueKernel(advancePathsKernel_MK_DL_SAMPLE_BSDF,
+			HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
+	// MNEE specular chain sub-state machine. Enqueued after
+	// MK_DL_SAMPLE_BSDF (so a task leaving MK_RT_DL with a started solve is
+	// only skipped by its needsTrace flag in this same iteration) and
+	// before MK_GENERATE_NEXT_VERTEX_RAY (so a finished solve transitions
+	// to the next path vertex in the same iteration).
+	intersectionDevice.EnqueueKernel(advancePathsKernel_MK_MNEE_NEXT_VERTEX,
 			HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
 	intersectionDevice.EnqueueKernel(advancePathsKernel_MK_GENERATE_NEXT_VERTEX_RAY,
 			HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));

@@ -169,6 +169,8 @@ private:
 		TextureMapping3DConstRef m
 	);
 	u_int CompileTextureOpsGenericBumpMap(const u_int texIndex);
+	void PushSpectralPauseStartOp(const u_int texIndex);
+	void PushSpectralPauseEndOp(const u_int texIndex);
 	u_int CompileTextureOps(const u_int texIndex, const slg::ocl::TextureEvalOpType opType);
 	void CompileTextureOps();
 	void CompileTextures();

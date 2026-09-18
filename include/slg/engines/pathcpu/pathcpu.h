@@ -24,6 +24,7 @@
 #include "slg/engines/cpurenderengine.h"
 #include "slg/engines/pathtracer.h"
 #include "slg/engines/caches/photongi/photongicache.h"
+#include "slg/engines/pathguiding.h"
 #include "slg/samplers/sampler.h"
 #include "slg/film/film.h"
 #include "slg/film/filmsamplesplatter.h"
@@ -94,6 +95,7 @@ protected:
 	FilmSampleSplatterUPtr lightSampleSplatter;
 	SamplerSharedDataSPtr lightSamplerSharedData;  // Shared data, shared ownership
 	PhotonGICache *photonGICache;
+	PathGuidingCache *pathGuidingCache;
 };
 
 }

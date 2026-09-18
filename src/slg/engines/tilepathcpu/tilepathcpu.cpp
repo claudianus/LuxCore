@@ -33,11 +33,13 @@ using namespace slg;
 //------------------------------------------------------------------------------
 
 TilePathCPURenderEngine::TilePathCPURenderEngine(RenderConfigRef rcfg) :
-		CPUTileRenderEngine(rcfg), photonGICache(nullptr) {
+		CPUTileRenderEngine(rcfg), photonGICache(nullptr),
+		pathGuidingCache(nullptr) {
 }
 
 TilePathCPURenderEngine::~TilePathCPURenderEngine() {
 	delete photonGICache;
+	delete pathGuidingCache;
 }
 
 void TilePathCPURenderEngine::InitFilm() {
@@ -122,6 +124,18 @@ void TilePathCPURenderEngine::StartLockLess() {
 	pathTracer.InitPixelFilterDistribution(GetPixelFilter());
 	pathTracer.SetPhotonGICache(photonGICache);
 
+	delete pathGuidingCache;
+	pathGuidingCache = nullptr;
+	if (cfg.Get(PathTracer::GetDefaultProps()->Get("path.guiding.enable")).Get<bool>()) {
+		const BSphere &bsphere = renderConfig.GetScene().GetSceneBSphere();
+		const Point cubeMin(bsphere.center.x - bsphere.rad,
+				bsphere.center.y - bsphere.rad,
+				bsphere.center.z - bsphere.rad);
+		pathGuidingCache = new PathGuidingCache(cubeMin, 2.f * bsphere.rad);
+		SLG_LOG("[TilePathCPURenderEngine] Path guiding (M1) enabled");
+	}
+	pathTracer.SetPathGuidingCache(pathGuidingCache);
+
 	//--------------------------------------------------------------------------
 
 	CPURenderEngine::StartLockLess();
@@ -134,6 +148,8 @@ void TilePathCPURenderEngine::StopLockLess() {
 	
 	delete photonGICache;
 	photonGICache = nullptr;
+	delete pathGuidingCache;
+	pathGuidingCache = nullptr;
 }
 
 //------------------------------------------------------------------------------

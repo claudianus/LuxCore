@@ -38,6 +38,7 @@ RTPathOCLRenderEngine::RTPathOCLRenderEngine(RenderConfigRef rcfg) :
 		throw runtime_error("opencl.native.threads.count must be 0 for RTPATHOCL");
 
 	syncBarrier = new std::barrier(2, completion_t());
+	syncThreadsRunning = false;
 	if (renderOCLThreads.size() > 1)
 		frameBarrier = new std::barrier(renderOCLThreads.size(), completion_t());
 	else
@@ -94,18 +95,30 @@ void RTPathOCLRenderEngine::StartLockLess() {
 	// To synchronize the start of all threads
 	syncType = SYNCTYPE_NONE;
 	syncBarrier->arrive_and_wait();
+
+	// The handshake succeeded: render thread 0 is in its sync loop and
+	// StopLockLess() may wait on the barrier (a failed start never
+	// reaches this point and must not block).
+	syncThreadsRunning = true;
 }
 
 void RTPathOCLRenderEngine::StopLockLess() {
-	syncType = SYNCTYPE_STOP;
-	syncBarrier->arrive_and_wait();
+	// Only handshake when the render threads actually entered their sync
+	// loop: after a failed Start (i.e. a kernel compilation error) the
+	// barrier partner does not exist and waiting would hang forever.
+	if (syncThreadsRunning) {
+		syncThreadsRunning = false;
 
-	// All render threads are now suspended and I can set the interrupt signal
-	for (size_t i = 0; i < renderOCLThreads.size(); ++i)
-		((RTPathOCLRenderThread *)renderOCLThreads[i])->renderThread->request_stop();
+		syncType = SYNCTYPE_STOP;
+		syncBarrier->arrive_and_wait();
 
-	syncType = SYNCTYPE_NONE;
-	syncBarrier->arrive_and_wait();
+		// All render threads are now suspended and I can set the interrupt signal
+		for (size_t i = 0; i < renderOCLThreads.size(); ++i)
+			((RTPathOCLRenderThread *)renderOCLThreads[i])->renderThread->request_stop();
+
+		syncType = SYNCTYPE_NONE;
+		syncBarrier->arrive_and_wait();
+	}
 
 	// Render threads will now detect the interruption
 
@@ -176,13 +189,17 @@ void RTPathOCLRenderEngine::EndFilmEdit(FilmRef flm, std::mutex *flmMutex) {
 	a.AddActions(CAMERA_EDIT);
 	compiledScene->Recompile(a);
 
-	// Re-start all rendering threads
+	// Re-start all rendering threads. The handshake is re-established
+	// below: a thread failing to start (kernel compilation error) must
+	// not leave StopLockLess() waiting on the barrier.
+	syncThreadsRunning = false;
 	for (size_t i = 0; i < renderOCLThreads.size(); ++i)
 		renderOCLThreads[i]->Start();
 
 	// To synchronize the start of all threads
 	syncType = SYNCTYPE_NONE;
 	syncBarrier->arrive_and_wait();
+	syncThreadsRunning = true;
 }
 
 void RTPathOCLRenderEngine::UpdateFilmLockLess() {

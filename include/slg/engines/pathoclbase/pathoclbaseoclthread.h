@@ -168,6 +168,11 @@ protected:
 	void InitSceneObjects();
 	void InitLights();
 	void InitPhotonGI();
+	void InitGuide();
+	// Path guiding (P1-3 M2b-2): drain GPU training records into the
+	// CPU cache, swap a training round and re-upload the coarse chunks.
+	// Called once per outer render iteration (device idle).
+	void DrainGuide();
 	void InitKernels();
 	void InitGPUTaskBuffer();
 	void InitSamplerSharedDataBuffer();
@@ -193,7 +198,8 @@ protected:
 	static void GetKernelParamters(std::vector<std::string> &params,
 			luxrays::HardwareIntersectionDeviceRef intersectionDevice,
 			const std::string renderEngineType,
-			const float epsilonMin, const float epsilonMax);
+			const float epsilonMin, const float epsilonMax,
+			const bool spectralEnable);
 	static std::string GetKernelSources();
 
 	u_int threadIndex;
@@ -248,6 +254,12 @@ protected:
 	luxrays::HardwareDeviceBuffer *pgicRadiancePhotonsBVHNodesBuff;
 	luxrays::HardwareDeviceBuffer *pgicCausticPhotonsBuff;
 	luxrays::HardwareDeviceBuffer *pgicCausticPhotonsBVHNodesBuff;
+	// Path guiding (P1-3 M2b): 16 frozen coarse-table chunks (4224B each)
+	luxrays::HardwareDeviceBuffer *guideChunkBuff[16];
+	// Guiding stats (validation)
+	luxrays::HardwareDeviceBuffer *guideDbgBuff;
+	// Path guiding (P1-3 M2b-2): per-task training records (float4/task)
+	luxrays::HardwareDeviceBuffer *guideRecBuff[16];
 
 	// OpenCL task related buffers
 	luxrays::HardwareDeviceBuffer *raysBuff;
@@ -262,6 +274,8 @@ protected:
 	luxrays::HardwareDeviceBuffer *sampleResultsBuff;
 	luxrays::HardwareDeviceBuffer *taskStatsBuff;
 	luxrays::HardwareDeviceBuffer *eyePathInfosBuff;
+	// ReSTIR DI per-pixel temporal reservoirs (filmWidth * filmHeight)
+	luxrays::HardwareDeviceBuffer *restirReservoirsBuff;
 	luxrays::HardwareDeviceBuffer *directLightVolInfosBuff;
 	luxrays::HardwareDeviceBuffer *pixelFilterBuff;
 
@@ -282,6 +296,7 @@ protected:
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_RT_DL;
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_DL_ILLUMINATE;
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_DL_SAMPLE_BSDF;
+	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_MNEE_NEXT_VERTEX;
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_GENERATE_NEXT_VERTEX_RAY;
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_SPLAT_SAMPLE;
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_NEXT_SAMPLE;

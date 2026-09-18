@@ -53,6 +53,7 @@
 #include "slg/volumes/heterogenous.h"
 #include "slg/volumes/homogenous.h"
 #include "slg/materials/disney.h"
+#include "slg/materials/hairmat.h"
 
 using namespace std;
 using namespace luxrays;
@@ -139,6 +140,7 @@ u_int CompiledScene::CompileMaterialOps(const u_int matIndex,
 		case ROUGHMATTETRANSLUCENT:
 		case GLOSSYTRANSLUCENT:
 		case DISNEY:
+		case HAIR:
 		case HOMOGENEOUS_VOL:
 		case CLEAR_VOL:
 		case HETEROGENEOUS_VOL:
@@ -805,6 +807,10 @@ void CompiledScene::CompileMaterials() {
 					mat->roughglass.interiorIorTexIndex = scene.GetTextures().GetTextureIndex(rgm.GetInteriorIOR());
 				else
 					mat->roughglass.interiorIorTexIndex = NULL_INDEX;
+				if (rgm.GetCauchyB())
+					mat->roughglass.cauchyBTex = scene.GetTextures().GetTextureIndex(rgm.GetCauchyB());
+				else
+					mat->roughglass.cauchyBTex = NULL_INDEX;
 
 				auto nuTex = rgm.GetNu();
 				auto nvTex = rgm.GetNv();
@@ -943,6 +949,16 @@ void CompiledScene::CompileMaterials() {
 					mat->disney.filmIorTexIndex = scene.GetTextures().GetTextureIndex(dm.GetFilmIOR());
 				else
 					mat->disney.filmIorTexIndex = NULL_INDEX;
+				mat->disney.transmissionTexIndex = scene.GetTextures().GetTextureIndex(dm.GetTransmission());
+				if (dm.GetTransmissionRoughness())
+					mat->disney.transmissionRoughnessTexIndex = scene.GetTextures().GetTextureIndex(dm.GetTransmissionRoughness());
+				else
+					mat->disney.transmissionRoughnessTexIndex = NULL_INDEX;
+				mat->disney.iorTexIndex = scene.GetTextures().GetTextureIndex(dm.GetIOR());
+				if (dm.GetCauchyB())
+					mat->disney.cauchyBTexIndex = scene.GetTextures().GetTextureIndex(dm.GetCauchyB());
+				else
+					mat->disney.cauchyBTexIndex = NULL_INDEX;
 				break;
 			}
 			case TWOSIDED: {
@@ -951,6 +967,24 @@ void CompiledScene::CompileMaterials() {
 				mat->type = slg::ocl::TWOSIDED;
 				mat->twosided.frontMatIndex = scene.GetMaterials().GetMaterialIndex(tsm.GetFrontMaterial());
 				mat->twosided.backMatIndex = scene.GetMaterials().GetMaterialIndex(tsm.GetBackMaterial());
+				break;
+			}
+			case HAIR: {
+				auto& hm = dynamic_cast<const HairMaterial &>(m);
+
+				mat->type = slg::ocl::HAIR;
+				mat->hair.sigmaATexIndex = hm.GetSigmaA() ?
+					scene.GetTextures().GetTextureIndex(hm.GetSigmaA()) : NULL_INDEX;
+				mat->hair.colorTexIndex = hm.GetColor() ?
+					scene.GetTextures().GetTextureIndex(hm.GetColor()) : NULL_INDEX;
+				mat->hair.eumelaninTexIndex = hm.GetEumelanin() ?
+					scene.GetTextures().GetTextureIndex(hm.GetEumelanin()) : NULL_INDEX;
+				mat->hair.pheomelaninTexIndex = hm.GetPheomelanin() ?
+					scene.GetTextures().GetTextureIndex(hm.GetPheomelanin()) : NULL_INDEX;
+				mat->hair.etaTexIndex = scene.GetTextures().GetTextureIndex(hm.GetEta());
+				mat->hair.betaMTexIndex = scene.GetTextures().GetTextureIndex(hm.GetBetaM());
+				mat->hair.betaNTexIndex = scene.GetTextures().GetTextureIndex(hm.GetBetaN());
+				mat->hair.alphaTexIndex = scene.GetTextures().GetTextureIndex(hm.GetAlpha());
 				break;
 			}
 			//------------------------------------------------------------------

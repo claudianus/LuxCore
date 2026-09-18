@@ -30,11 +30,41 @@ typedef struct {
 
 	int forceBlackBackground;
 
+	// ReSTIR DI direct light resampling: RIS reservoir over the light
+	// picking distribution (the proposal q). The target function is the
+	// estimated direct contribution (radiance x geometry / (q * pdfW)).
+	// See DirectLight_Illuminate() in pathoclbase_funcs.cl.
+	struct {
+		int enabled;
+		unsigned int candidateCount;
+		// Temporal reuse: merge each pixel's stored previous-pass
+		// reservoir (lightIndex/wSum/M/target) as extra proposal draws.
+		int temporalEnable;
+	} restir;
+
+	// MNEE (Manifold Next Event Estimation): direct light sampling through
+	// a delta specular chain x0 -> ... -> y. The kernel port of
+	// PathTracer::MNEEDirectSampling() (single vertex) and
+	// PathTracer::MNEEMultiDirectSampling() (multi-specular chain, used
+	// when maxSpecular > 1 and the single vertex solve fails).
+	// Opt-in with path.mnee.enable; maxIterations mirrors
+	// path.mnee.maxiterations, maxSpecular mirrors path.mnee.maxspecular.
+	struct {
+		int enabled;
+		unsigned int maxIterations;
+		unsigned int maxSpecular;
+	} mnee;
+
 	// Hybrid backward/forward path tracing settings
 	struct {
 		int enabled;
 		float glossinessThreshold;
 	} hybridBackForward;
+
+	// Hero-wavelength spectral transport (P2-1 A2): when non-zero the kernel
+	// is compiled with -D SLG_SPECTRAL, draws one extra boot dimension for
+	// the path wavelengths and treats Spectrum channels as spectral bins.
+	unsigned int spectralEnable;
 
 	// PhotonGI cache settings
 	struct {

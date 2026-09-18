@@ -32,6 +32,7 @@
 #include "slg/film/imagepipeline/plugins/tonemaps/autolinear.h"
 #include "slg/samplers/random.h"
 #include "slg/samplers/sobol.h"
+#include "slg/samplers/pmj02.h"
 #include "slg/samplers/metropolis.h"
 #include "slg/samplers/tilepathsampler.h"
 
@@ -96,6 +97,7 @@ void RenderEngine::Start(FilmRef flm, std::mutex *flmMutex) {
 	assert (!started);
 	started = true;
 
+	try {
 	// Update the film pointer
 	film = &flm;
 	filmMutex = flmMutex;
@@ -132,15 +134,27 @@ void RenderEngine::Start(FilmRef flm, std::mutex *flmMutex) {
 	StartLockLess();
 
 	film->ResetTests();
+	} catch (...) {
+		// A start that failed halfway (i.e. a kernel compilation error
+		// thrown while the render threads were being created) must leave
+		// the engine looking "not started": IsStarted() gates Stop() in
+		// the RenderSession destructor and a barrier-synchronized engine
+		// (RTPATHOCL) would otherwise wait forever inside StopLockLess()
+		// for render threads that never entered their loop.
+		started = false;
+		throw;
+	}
 }
 
 void RenderEngine::Stop() {
+	if (!started)
+		return;
+
 	{
 		std::lock_guard<std::recursive_mutex> lock(engineMutex);
 
 		StopLockLess();
 
-		assert (started);
 		started = false;
 
 		if (ctx->IsRunning())
@@ -229,11 +243,13 @@ void RenderEngine::CheckSamplersForNoTile(const string &engineName, const Proper
 	const string samplerType = cfg.Get(Property("sampler.type")(SobolSampler::GetObjectTag())).Get<string>();
 	if ((samplerType != RandomSampler::GetObjectTag()) &&
 			(samplerType != SobolSampler::GetObjectTag()) &&
-			(samplerType != MetropolisSampler::GetObjectTag()))
+			(samplerType != MetropolisSampler::GetObjectTag()) &&
+			(samplerType != PMJ02Sampler::GetObjectTag()))
 		throw runtime_error(engineName + " render engine can use only " +
 				RandomSampler::GetObjectTag() + ", " +
-				SobolSampler::GetObjectTag() + " or " +
-				MetropolisSampler::GetObjectTag() + " samplers ");
+				SobolSampler::GetObjectTag() + ", " +
+				MetropolisSampler::GetObjectTag() + " or " +
+				PMJ02Sampler::GetObjectTag() + " samplers ");
 }
 
 void RenderEngine::CheckSamplersForTile(const string &engineName, const Properties &cfg) {
@@ -268,6 +284,28 @@ PropertiesUPtr RenderEngine::ToProperties(const Properties &cfg) {
 
 RenderEngineUPtr RenderEngine::FromProperties(RenderConfigRef rcfg) {
 	const string type = rcfg.GetConfig().Get(Property("renderengine.type")(PathCPURenderEngine::GetObjectTag())).Get<string>();
+
+	// Hero-wavelength spectral transport (P2-1): implemented on the CPU
+	// path-tracing engines and on the PathOCL micro-kernel engines
+	// (PATHOCL/TILEPATHOCL/RTPATHOCL; -D SLG_SPECTRAL, wavelengths ride in
+	// SampleResult/HitPoint). Engines without kernel support are rejected.
+	if (rcfg.GetConfig().Get(Property("path.spectral.enable")(false)).Get<bool>()) {
+		const RenderEngineType engineType = String2RenderEngineType(type);
+		if ((engineType != PATHCPU) && (engineType != TILEPATHCPU) &&
+				(engineType != RTPATHCPU) && (engineType != LIGHTCPU) &&
+				(engineType != PATHOCL) && (engineType != TILEPATHOCL) &&
+				(engineType != RTPATHOCL))
+			throw runtime_error("path.spectral.enable is supported only by PATHCPU, TILEPATHCPU, RTPATHCPU, LIGHTCPU, PATHOCL, TILEPATHOCL and RTPATHOCL engines: " + type);
+
+		// PhotonGI caches store RGB photon radiance: under spectral
+		// transport the cache values are (silently) multiplied by
+		// wavelength-bin throughputs. The result is bounded but not the
+		// correct spectral estimator, so warn until the caches carry bins.
+		if (rcfg.GetConfig().Get(Property("path.photongi.indirect.enabled")(false)).Get<bool>() ||
+				rcfg.GetConfig().Get(Property("path.photongi.caustic.enabled")(false)).Get<bool>())
+			SLG_LOG("WARNING: path.spectral.enable + PhotonGI mixes RGB caches with spectral bins (approximation, not a physical error)");
+	}
+
 	RenderEngineRegistry::FromProperties func;
 	if (RenderEngineRegistry::STATICTABLE_NAME(FromProperties).Get(type, func))
 		return std::unique_ptr<RenderEngine>(func(rcfg));

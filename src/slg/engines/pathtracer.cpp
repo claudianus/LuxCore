@@ -19,10 +19,12 @@
 
 #include "luxrays/usings.h"
 #include "luxrays/utils/properties.h"
+#include "luxrays/core/color/spectral.h"
 #include "slg/lights/light.h"
 #include "slg/usings.h"
 #include "slg/engines/pathtracer.h"
 #include "slg/engines/caches/photongi/photongicache.h"
+#include "slg/engines/pathguiding.h"
 #include "slg/samplers/metropolis.h"
 #include "slg/utils/varianceclamping.h"
 #include "slg/cameras/camera.h"
@@ -78,7 +80,64 @@ const Film::FilmChannels PathTracer::lightSampleResultsChannels({
 }); 
 
 PathTracer::PathTracer() : pixelFilterDistribution(nullptr),
-		photonGICache(nullptr) {
+		photonGICache(nullptr), pathGuidingCache(nullptr),
+		guidingEnable(false), spectralEnable(false) {
+}
+
+// Path guiding (P1-3 M1): independent bin-pick uniform. The pick must be
+// uniform and independent of the jitter uniforms, but sampler dims come
+// in at most two Cranley-Patterson shift parities, so any third guide
+// dim shares a shift with a jitter dim (correlated triple = biased pdf).
+// Hash (pixel, pass, vertex) instead: uniform, shift-independent,
+// deterministic.
+// M2c: earliest bounce depth at which the guide may sample (env
+// LUX_PG_MINDEPTH, default 2). Early-bounce incident is direct-dominated
+// and DL already covers it, so guiding there only dilutes; the guide's
+// headroom is indirect (deeper bounces). Measured: mindepth 0/1/2 RMSE
+// 0.0088/0.0077/0.0068 at small scale (plain 0.0044).
+static int GuidingMinDepth() {
+	static const int kMinDepth = []() {
+		const char *e = getenv("LUX_PG_MINDEPTH");
+		return e ? atoi(e) : 2;
+	}();
+	return kMinDepth;
+}
+// M2c indirect-only training (default on; LUX_PG_INDIRECT=0 opts out).
+// M2c: skip near-smooth glossy (env LUX_PG_GLOSS, default .3). A 128-bin
+// field cannot resolve a tight lobe; guiding there only dilutes against
+// near-perfect BSDF sampling. Rough-glossy/diffuse keep the guide.
+static float GuidingGloss() {
+	static const float kGloss = []() {
+		const char *e = getenv("LUX_PG_GLOSS");
+		return e ? (float)atof(e) : .3f;
+	}();
+	return kGloss;
+}
+
+// M2c E3: guide diffuse bounces too (default off; LUX_PG_DIFFUSE=1).
+// M1 excluded them (cosine-BSDF near-optimal, blunt field only adds
+// noise); with indirect-only + smoothed + adaptive field it may help.
+static bool GuidingDiffuse() {
+	static const bool kDiffuse = (getenv("LUX_PG_DIFFUSE") != nullptr);
+	return kDiffuse;
+}
+
+static bool GuidingIndirect() {
+	static const bool kIndirect = []() {
+		const char *e = getenv("LUX_PG_INDIRECT");
+		return !e || (atoi(e) != 0);
+	}();
+	return kIndirect;
+}
+
+static u_int GuidingHash(u_int x) {
+	// murmur3 32-bit finalizer (same as SobolSequence::BlueNoiseHash)
+	x ^= x >> 16;
+	x *= 0x7feb352du;
+	x ^= x >> 15;
+	x *= 0x846ca68bu;
+	x ^= x >> 16;
+	return x;
 }
 
 PathTracer::~PathTracer() {
@@ -149,16 +208,19 @@ PathTracer::DirectLightResult PathTracer::DirectLightSampling(
 			scene.GetLightSources().GetInfiniteLightStrategy() :
 			scene.GetLightSources().GetIlluminateLightStrategy();
 
-		// Pick a light source to sample
-		const Normal landingNormal = bsdf.hitPoint.intoObject ? bsdf.hitPoint.shadeN : -bsdf.hitPoint.shadeN;
+		// Pick a light source to sample (BSDF-aware path: lets ReSTIR-style
+		// strategies weight candidates by estimated contribution).
+		// risScale carries a resampling (RIS) output weight separate from
+		// the MIS pick pdf so both MIS sides stay consistent.
 		float lightPickPdf;
-		auto light = lightStrategy.SampleLights(
+		float risScale = 1.f;
+		auto light = lightStrategy.SampleLightsBSDF(
 			scene,
+			bsdf,
+			time,
 			u0,
-			bsdf.hitPoint.p,
-			landingNormal,
-			bsdf.IsVolume(),
-			&lightPickPdf
+			&lightPickPdf,
+			&risScale
 		);
 
 		if (light) {
@@ -212,15 +274,36 @@ PathTracer::DirectLightResult PathTracer::DirectLightSampling(
 							// I'm ignoring volume emission because it is not sampled in
 							// direct light step.
 							const float directLightSamplingPdfW = directPdfW * lightPickPdf;
-							const float factor = 1.f / directLightSamplingPdfW;
+							const float factor = risScale / directLightSamplingPdfW;
+
+							// Path guiding (P1-3 M1): when the bounce at this
+							// vertex is mixture-sampled, the competing
+							// technique for the DL/BSDF MIS is the mixture
+							// (0.5*BSDF + 0.5*guide), not pure BSDF. Using
+							// the pure BSDF pdf here overstates the
+							// competitor wherever the guide is concentrated
+							// elsewhere and slashes DL contributions (bias).
+							// (CanGuide is monotonic, so a DL-time/ bounce-
+							// time flip is a negligible transient.)
+							float bouncePdfW = bsdfPdfW;
+							if (guidingEnable && pathGuidingCache && !bsdf.IsDelta() &&
+								(GuidingDiffuse() || ((bsdf.GetEventTypes() & GLOSSY) != 0)) &&
+								(bsdf.GetGlossiness() >= GuidingGloss()) &&
+									((int)pathInfo.depth.depth >= GuidingMinDepth()) &&
+									pathGuidingCache->CanGuide(bsdf.hitPoint.p)) {
+								const float wDl = PathGuidingCache::MixWeight(
+										pathGuidingCache->ReadTotal(bsdf.hitPoint.p));
+								bouncePdfW = (1.f - wDl) * bsdfPdfW + wDl * pathGuidingCache->Pdf(
+										bsdf.hitPoint.p, bsdf.hitPoint.shadeN, shadowRay.d);
+							}
 
 							if (directLightDepthInfo.GetRRDepth() >= rrDepth) {
 								// Russian Roulette
-								bsdfPdfW *= RenderEngine::RussianRouletteProb(bsdfEval, rrImportanceCap);
+								bouncePdfW *= RenderEngine::RussianRouletteProb(bsdfEval, rrImportanceCap);
 							}
 
 							// Account for material transparency
-							bsdfPdfW *= light->GetAvgPassThroughTransparency();
+							bouncePdfW *= light->GetAvgPassThroughTransparency();
 
 							// MIS between direct light sampling and BSDF sampling
 							//
@@ -230,7 +313,7 @@ PathTracer::DirectLightResult PathTracer::DirectLightSampling(
 								CheckDirectHitVisibilityFlags(*light, directLightDepthInfo, event) &&
 								!shadowBsdf.hitPoint.throughShadowTransparency;
 
-							const float weight = misEnabled ? PowerHeuristic(directLightSamplingPdfW, bsdfPdfW) : 1.f;
+							const float weight = misEnabled ? PowerHeuristic(directLightSamplingPdfW, bouncePdfW) : 1.f;
 							const Spectrum incomingRadiance = bsdfEval * (weight * factor) * connectionThroughput * lightRadiance;
 
 							sampleResult->AddDirectLight(light->GetID(), event, pathThroughput, incomingRadiance, 1.f);
@@ -249,8 +332,44 @@ PathTracer::DirectLightResult PathTracer::DirectLightSampling(
 						}
 
 						return ILLUMINATED;
-					} else
-						return SHADOWED; 
+					} else {
+						// The shadow ray was blocked by a surface. MNEE: if the
+						// blocker is a delta specular material and the light is a
+						// positional delta emitter, try to solve the specular chain
+						// x0 -> x1 -> y (Hanika et al. 2015 / Zeltner et al. 2020).
+						// The plain estimator is 0 on these paths and forward BSDF
+						// sampling can not hit a positional delta light, so the
+						// estimators are disjoint and no MIS is required.
+						if (mneeEnable && useBSDFEVal && !bsdf.IsShadowCatcher() &&
+								(light->GetType() == TYPE_POINT ||
+								light->GetType() == TYPE_SPOT ||
+								light->GetType() == TYPE_MAPPOINT) &&
+								!shadowBsdf.IsVolume() &&
+								shadowBsdf.IsDelta() &&
+								(shadowBsdf.GetEventTypes() & SPECULAR)) {
+							if (MNEEDirectSampling(device, scene, time, pathInfo,
+									pathThroughput, bsdf, *light, lightPickPdf, risScale,
+									shadowRay, directPdfW, shadowRayHit, shadowBsdf, volInfo,
+									u1, u2, u3, u4, sampleResult))
+								return ILLUMINATED;
+
+							// The single vertex solve found no solution (e.g. the
+							// light is not visible from that vertex because a
+							// second refracting face is in the way): try the
+							// multi-specular chain (closed glass slab / glass ball
+							// caustics). The two are different path structures
+							// (one specular vertex vs N), so they never both
+							// contribute to the same path.
+							if (mneeMaxSpecular > 1 &&
+									MNEEMultiDirectSampling(device, scene, time, pathInfo,
+										pathThroughput, bsdf, *light, lightPickPdf, risScale,
+										shadowRay, directPdfW, shadowRayHit, shadowBsdf, volInfo,
+										u1, u2, u3, u4, sampleResult))
+								return ILLUMINATED;
+						}
+
+						return SHADOWED;
+					}
 				}
 			}
 		}
@@ -296,9 +415,22 @@ void PathTracer::DirectHitFiniteLight(SceneConstRef scene,
 		float weight;
 		if (!(pathInfo.lastBSDFEvent & SPECULAR)) {
 			auto& lightStrategy = scene.GetLightSources().GetIlluminateLightStrategy();
-			const float lightPickProb = lightStrategy.SampleLightPdf(
-				*lightSource,
-				ray.o, pathInfo.lastShadeN, pathInfo.lastFromVolume);
+			// RESTIR_DI culls provably-shadowed lights from DL sampling
+			// (Stage 2/3 IsAlwaysInShadow). A culled light has NO DL-side
+			// coverage, so the direct hit is the sole covering technique
+			// and its MIS weight must be 1: weighting it against a DL
+			// density that can never produce it drops energy (measured as
+			// a clustered -1.7% dark bias on mesh scenes). lastShadeN is
+			// exactly the landing normal the DL-side cull used at this
+			// vertex (pathinfo.cpp), so the decisions agree exactly.
+			// Other strategies never cull: weight unchanged for them.
+			if (lightStrategy.GetType() == TYPE_RESTIR_DI &&
+					lightSource->IsAlwaysInShadow(scene, ray.o, pathInfo.lastShadeN)) {
+				weight = 1.f;
+			} else {
+				const float lightPickProb = lightStrategy.SampleLightPdf(
+					*lightSource,
+					ray.o, pathInfo.lastShadeN, pathInfo.lastFromVolume);
 
 			// This is a specific check to avoid fireflies with DLSC
 			if ((lightPickProb == 0.f) && lightSource->IsDirectLightSamplingEnabled() &&
@@ -310,6 +442,7 @@ void PathTracer::DirectHitFiniteLight(SceneConstRef scene,
 
 			// MIS between BSDF sampling and direct light sampling
 			weight = PowerHeuristic(pathInfo.lastBSDFPdfW * lightSource->GetAvgPassThroughTransparency(), directPdfW * lightPickProb);
+			}
 		} else
 			weight = 1.f;
 
@@ -398,6 +531,8 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 	bool photonGIShowIndirectPathMixUsed = false;
 	bool photonGICausticCacheUsed = false;
 	bool photonGICacheEnabledOnLastHit = false;
+	float radianceVertStart = 0.f;
+	float directVertStart = 0.f;
 	bool albedoToDo = true;
 	sampleResult.albedo = Spectrum(); // Just in case albedoToDo is never true
 	sampleResult.shadingNormal = Normal();
@@ -405,6 +540,17 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 	BSDF bsdf;
 	for (;;) {
 		sampleResult.firstPathVertex = (pathInfo.depth.depth == 0);
+		// Path guiding (P1-3 M1): snapshot the accumulated radiance so the
+		// arrival record below can credit this vertex with its local value
+		// (direct light + emission added during this vertex), normalized by
+		// the arrival throughput into an incident-radiance estimate. (Plain
+		// throughput recording would learn path density, not radiance.)
+		radianceVertStart = sampleResult.radiance.Sum().Filter();
+		directVertStart = sampleResult.directDiffuseReflect.Filter() +
+				sampleResult.directDiffuseTransmit.Filter() +
+				sampleResult.directGlossyReflect.Filter() +
+				sampleResult.directGlossyTransmit.Filter() +
+				sampleResult.emission.Filter();
 		const u_int sampleOffset = eyeSampleBootSize + pathInfo.depth.depth * eyeSampleStepSize;
 
 		RayHit eyeRayHit;
@@ -614,10 +760,185 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 				cosSampledDir = -1.f;
 				bsdfEvent = pathInfo.lastBSDFEvent;
 			} else {
-				bsdfSample = bsdf.Sample(&sampledDir,
-						sampler.GetSample(sampleOffset + 6),
-						sampler.GetSample(sampleOffset + 7),
-						&bsdfPdfW, &cosSampledDir, &bsdfEvent);
+				// Path guiding (P1-3 M1, CPU only): train on every
+				// non-delta arrival, but guide glossy bounces only.
+				// Rationale: diffuse cosine-BSDF sampling is already
+				// near-optimal, so a blunt fixed-grid guide can only add
+				// noise there; glossy BSDF sampling is poor and benefits.
+				// One-sample MIS with randomized 50/50 technique selection:
+				// u6 doubles as the selector (rescaled afterwards to a
+				// uniform draw, so no new sample dimensions); the mixture
+				// pdf in the denominator keeps every branch unbiased.
+				// (A deterministic selection with mixture weights would be
+				// biased: the weights must match the selection probabilities.)
+				// NOTE: the books (bsdfEvent for depth counting) come from
+				// a shadow BSDF draw with the same uniforms, not from
+				// Evaluate's event superset (which would consume specular
+				// depth on every guided bounce and terminate paths early).
+				bool guided = false;
+				const bool tryGuide = pathGuidingCache && !bsdf.IsDelta() &&
+						(GuidingDiffuse() || ((bsdf.GetEventTypes() & GLOSSY) != 0)) &&
+						(bsdf.GetGlossiness() >= GuidingGloss()) &&
+						((int)pathInfo.depth.depth >= GuidingMinDepth()) &&
+						pathGuidingCache->CanGuide(bsdf.hitPoint.p);
+				const float uSelRaw = sampler.GetSample(sampleOffset + 6);
+				// M2c adaptive mixture: selection probability from the
+				// read-side (frozen-in-round) cell total, so bounce-time
+				// and DL-time weights agree. Any w in (0,1) is exact.
+				const float wGuide = (guidingEnable && tryGuide) ?
+						PathGuidingCache::MixWeight(
+							pathGuidingCache->ReadTotal(bsdf.hitPoint.p)) : .5f;
+				const bool takeGuideSide = (uSelRaw < wGuide);
+				// Both mixture sides must rescale the selector to a full
+				// [0,1) conditional uniform. Reusing the raw draw on the
+				// BSDF side would restrict it to [0,.5) (!takeGuideSide
+				// conditions uSelRaw<.5 for stateless samplers), silently
+				// replacing the BSDF density with its low-u0 half (bias).
+				const float uSelRescaled = takeGuideSide ?
+						uSelRaw / Max(wGuide, 1e-6f) :
+						(uSelRaw - wGuide) / Max(1.f - wGuide, 1e-6f);
+				if (pathGuidingCache && !bsdf.IsDelta()) {
+					// Incident-radiance training target: local value added
+					// at this vertex (direct light + emission since vertex
+					// start), divided by the arrival throughput. Unbiased
+					// incident estimate; Record clamps fireflies.
+					// M2c (env LUX_PG_INDIRECT=1): train on indirect only
+					// (total minus direct light added this vertex). DL
+					// covers direct better than any guide; the guide's
+					// headroom is indirect transport, and a direct-peak
+					// field only duplicates DL's job at 50% cost.
+					const float arrival = Max(pathThroughput.Filter(), 1e-3f);
+					float localValue = sampleResult.radiance.Sum().Filter() - radianceVertStart;
+					if (GuidingIndirect()) {
+						const float dlAdded = sampleResult.directDiffuseReflect.Filter() +
+								sampleResult.directDiffuseTransmit.Filter() +
+								sampleResult.directGlossyReflect.Filter() +
+								sampleResult.directGlossyTransmit.Filter() +
+								sampleResult.emission.Filter() - directVertStart;
+						localValue -= dlAdded;
+					}
+					pathGuidingCache->Record(bsdf.hitPoint.p, -eyeRay.d,
+							localValue / arrival);
+					if (guidingEnable && tryGuide && takeGuideSide) {
+						float guidePdfW;
+						Vector guideDir;
+						// Sample() is total under tryGuide (table miss falls
+						// back to cosine sampling inside), so the guide side
+						// always draws from a valid distribution with exact
+						// pdf: the one-sample MIS stays exact. Falling back
+						// to a BSDF resample here (under mixture weights)
+						// would be biased; a zero-contribution guide draw
+						// kills the path instead (also unbiased).
+						// Independent bin pick (see GuidingHash note above).
+						// M2c E4 (env LUX_PG_UBIN=9): stratified Sobol dim 9
+						// instead of the hash (dim 9 is padding inside the
+						// 10-dim eye step; dims 0-8 are taken). Stratified
+						// across pixels, still an independent dimension
+						// from the selector (dim 6). Default stays hashed
+						// (pass-decorrelated) until measured better.
+						static const bool kStratBin = (getenv("LUX_PG_UBIN") != nullptr);
+						const float uBin = kStratBin ?
+							sampler.GetSample(sampleOffset + 9) : GuidingHash(
+								(sampleResult.pixelX * 73856093u) ^
+								(sampleResult.pixelY * 19349663u) ^
+								(sampler.GetPass() * 83492791u) ^
+								(sampleOffset * 2971215073u)) *
+								(1.f / 4294967296.f);
+						if (pathGuidingCache->Sample(bsdf.hitPoint.p,
+								bsdf.hitPoint.shadeN,
+								uBin,
+								uSelRescaled,
+								sampler.GetSample(sampleOffset + 7),
+								&guideDir, &guidePdfW) && (guidePdfW > 0.f)) {
+							// Shadow BSDF draw with the same uniforms: only
+							// its event is kept (single-lobe books for depth
+							// counting); the direction/pdf are the guide's.
+							// (If the shadow draw absorbs, fall back to the
+							// Evaluate event.)
+							Vector discardDir;
+							float discardPdfW, discardCos;
+							BSDFEvent shadowEvent = (BSDFEvent)0;
+							const Spectrum discardEval = bsdf.Sample(&discardDir,
+									uSelRescaled,
+									sampler.GetSample(sampleOffset + 7),
+									&discardPdfW, &discardCos, &shadowEvent);
+							BSDFEvent guideEvent;
+							float guideBsdfPdfW, guideReversePdfW;
+							const Spectrum guideEvalDouble = bsdf.Evaluate(guideDir,
+									&guideEvent, &guideBsdfPdfW, &guideReversePdfW);
+							// DisneyMaterial::Evaluate double-counts the cosine
+							// (its DisneyEvaluate already includes |cos| and the
+							// wrapper multiplies by |cos| again, unlike Sample
+							// which is single-cos like the other materials'
+							// Evaluate). Reduce to the single-cos numerator the
+							// mixture needs (upstream DL quirk, out of scope).
+							const float cosLocal = fabsf(bsdf.GetFrame().ToLocal(guideDir).z);
+							const Spectrum guideEval = (cosLocal > 1e-3f) ?
+									guideEvalDouble / cosLocal : Spectrum();
+							if (!guideEval.Black()) {
+								// bsdfEval already holds f * cos (like the
+								// BSDF branch factor); divide by the mixture.
+								const float mixPdfW = (1.f - wGuide) * guideBsdfPdfW + wGuide * guidePdfW;
+								if (mixPdfW > 0.f) {
+									sampledDir = guideDir;
+									bsdfSample = guideEval / mixPdfW;
+									bsdfPdfW = mixPdfW;
+									cosSampledDir = fabsf(Dot(bsdf.hitPoint.shadeN, sampledDir));
+									bsdfEvent = discardEval.Black() ? guideEvent : shadowEvent;
+									guided = true;
+								} else {
+									// Zero density under both techniques:
+									// the draw contributes nothing; kill the
+									// path (unbiased, keeps MIS exact).
+									guided = true;
+									bsdfSample = Spectrum();
+								}
+							} else {
+								// Valid guide draw, zero BSDF contribution
+								// (e.g. across a shading/geometry normal
+								// side): the path contributes nothing here.
+								// Kill it instead of resampling the BSDF
+								// under mixture weights (biased).
+								guided = true;
+								bsdfSample = Spectrum();
+							}
+						} else {
+							// Unreachable under tryGuide (Sample is total
+							// there); kill the path rather than resample.
+							guided = true;
+							bsdfSample = Spectrum();
+						}
+					}
+				}
+				if (!guided) {
+					// Inside the mixture (tryGuide) either side uses the
+					// rescaled conditional uniform (a full [0,1) uniform
+					// given the selector outcome); elsewhere the raw draw
+					// keeps stock sampler behavior bit-for-bit.
+					const float uBsdf = (guidingEnable && tryGuide) ?
+							uSelRescaled : sampler.GetSample(sampleOffset + 6);
+					bsdfSample = bsdf.Sample(&sampledDir,
+							uBsdf,
+							sampler.GetSample(sampleOffset + 7),
+							&bsdfPdfW, &cosSampledDir, &bsdfEvent);
+					if (guidingEnable && tryGuide) {
+						// Every BSDF-side sample under tryGuide (whichever
+						// way the selector fell) must be reweighted to the
+						// mixture: one-sample MIS divides by the marginal
+						// sampling density on both sides. Gating this on
+						// takeGuideSide instead leaves the !take side at
+						// full BSDF weight (bias).
+						const float guidePdfW = pathGuidingCache->Pdf(
+								bsdf.hitPoint.p, bsdf.hitPoint.shadeN, sampledDir);
+						const float mixPdfW = .5f * bsdfPdfW + .5f * guidePdfW;
+						if (mixPdfW > 0.f) {
+							// bsdfSample here holds f * cos / bsdfPdfW
+							// (material convention); reweight to the mixture.
+							bsdfSample *= bsdfPdfW / mixPdfW;
+							bsdfPdfW = mixPdfW;
+						}
+					}
+				}
 				pathInfo.isPassThroughPath = false;
 			}
 		}
@@ -674,6 +995,28 @@ void PathTracer::RenderEyePath(IntersectionDeviceRef device,
 // RenderEyeSample
 //------------------------------------------------------------------------------
 
+// Project every spectral color field of a SampleResult (wavelength bins)
+// back to film RGB under the CIE matching functions. Data fields (positions,
+// normals, IDs, alpha, masks) are left untouched.
+static void ProjectSampleResultToRGB(SampleResult &sr, const PathWavelengths &sw) {
+	for (u_int i = 0; i < sr.radiance.Size(); ++i)
+		sr.radiance[i] = Spectral::ProjectToRGB(sr.radiance[i], sw);
+	sr.directDiffuseReflect = Spectral::ProjectToRGB(sr.directDiffuseReflect, sw);
+	sr.directDiffuseTransmit = Spectral::ProjectToRGB(sr.directDiffuseTransmit, sw);
+	sr.directGlossyReflect = Spectral::ProjectToRGB(sr.directGlossyReflect, sw);
+	sr.directGlossyTransmit = Spectral::ProjectToRGB(sr.directGlossyTransmit, sw);
+	sr.emission = Spectral::ProjectToRGB(sr.emission, sw);
+	sr.indirectDiffuseReflect = Spectral::ProjectToRGB(sr.indirectDiffuseReflect, sw);
+	sr.indirectDiffuseTransmit = Spectral::ProjectToRGB(sr.indirectDiffuseTransmit, sw);
+	sr.indirectGlossyReflect = Spectral::ProjectToRGB(sr.indirectGlossyReflect, sw);
+	sr.indirectGlossyTransmit = Spectral::ProjectToRGB(sr.indirectGlossyTransmit, sw);
+	sr.indirectSpecularReflect = Spectral::ProjectToRGB(sr.indirectSpecularReflect, sw);
+	sr.indirectSpecularTransmit = Spectral::ProjectToRGB(sr.indirectSpecularTransmit, sw);
+	sr.irradiance = Spectral::ProjectToRGB(sr.irradiance, sw);
+	sr.irradiancePathThroughput = Spectral::ProjectToRGB(sr.irradiancePathThroughput, sw);
+	sr.albedo = Spectral::ProjectToRGB(sr.albedo, sw);
+}
+
 void PathTracer::RenderEyeSample(
 	IntersectionDeviceRef device,
 	SceneConstRef scene, FilmConstRef film,
@@ -682,11 +1025,24 @@ void PathTracer::RenderEyeSample(
 ) const {
 	ResetEyeSampleResults(sampleResults);
 
+	// Spectral transport: draw the path wavelengths (the extra boot
+	// dimension allocated by ParseOptions) and activate them for the
+	// duration of the path on this thread
+	PathWavelengths sw;
+	if (spectralEnable)
+		sw.Sample(sampler.GetSample(eyeSampleBootSize - 1));
+	const Spectral::ScopeWavelengths wlScope(sw);
+
 	EyePathInfo pathInfo;
 	Ray eyeRay;
 	GenerateEyeRay(scene.GetCamera(), film, eyeRay, pathInfo.volume, sampler, sampleResults[0]);
 
 	RenderEyePath(device, scene, sampler, pathInfo, eyeRay, Spectrum(1.f), sampleResults);
+
+	if (wlScope.Active()) {
+		for (auto &sr : sampleResults)
+			ProjectSampleResultToRGB(sr, sw);
+	}
 }
 
 //------------------------------------------------------------------------------
@@ -812,6 +1168,13 @@ void PathTracer::RenderLightSample(IntersectionDeviceRef device,
 		Sampler& sampler, vector<SampleResult> &sampleResults,
 		const ConnectToEyeCallBackType &ConnectToEyeCallBack) const {
 	sampleResults.clear();
+
+	// Spectral transport: draw the path wavelengths (the extra boot
+	// dimension allocated by ParseOptions) for the light path
+	PathWavelengths sw;
+	if (spectralEnable)
+		sw.Sample(sampler.GetSample(lightSampleBootSize - 1));
+	const Spectral::ScopeWavelengths wlScope(sw);
 
 	Spectrum lightPathFlux;
 
@@ -942,6 +1305,11 @@ void PathTracer::RenderLightSample(IntersectionDeviceRef device,
 
 			nextEventRay.Update(bsdf.GetRayOrigin(sampledDir), sampledDir);
 		}
+	}
+
+	if (wlScope.Active()) {
+		for (auto &sr : sampleResults)
+			ProjectSampleResultToRGB(sr, sw);
 	}
 }
 
@@ -1079,17 +1447,32 @@ void PathTracer::ParseOptions(
 	albedoSpecularSetting = String2AlbedoSpecularSetting(cfg.Get(defaultProps.Get("path.albedospecular.type")).Get<string>());
 	albedoSpecularGlossinessThreshold = Max(cfg.Get(defaultProps.Get("path.albedospecular.glossinessthreshold")).Get<double>(), 0.0);
 
-	// Update eye sample size
-	eyeSampleBootSize = 5;
-	eyeSampleStepSize = 9;
-	eyeSampleSize = 
+	// MNEE (specular chain direct light sampling)
+	mneeEnable = cfg.Get(defaultProps.Get("path.mnee.enable")).Get<bool>();
+	mneeMaxIterations = Max(1, cfg.Get(defaultProps.Get("path.mnee.maxiterations")).Get<int>());
+	mneeMaxSpecular = Clamp(cfg.Get(defaultProps.Get("path.mnee.maxspecular")).Get<int>(), 1, 4);
+
+	// Path guiding (P1-3 M1 CPU; M2b GPU samples a frozen table file)
+	// (path.guiding.tablefile, empty = train inline (CPU) / unguided (GPU))
+	guidingEnable = cfg.Get(defaultProps.Get("path.guiding.enable")).Get<bool>();
+	guidingTableFile = cfg.Get(defaultProps.Get("path.guiding.tablefile")).Get<string>();
+
+	// Hero-wavelength spectral transport (P2-1): Spectrum channels carry
+	// spectral samples at the path wavelengths instead of RGB primaries
+	spectralEnable = cfg.Get(defaultProps.Get("path.spectral.enable")).Get<bool>();
+	Spectral::SetEnabled(spectralEnable);
+
+	// Update eye sample size (9 classic dims + 1 path-guiding bin pick)
+	eyeSampleBootSize = 5 + (spectralEnable ? 1 : 0); // +1 wavelength draw
+	eyeSampleStepSize = 10;
+	eyeSampleSize =
 		eyeSampleBootSize + // To generate eye ray
 		(maxPathDepth.depth + 1) * eyeSampleStepSize; // For each path vertex
-	
+
 	// Update light sample size
-	lightSampleBootSize = 9;
+	lightSampleBootSize = 9 + (spectralEnable ? 1 : 0); // +1 wavelength draw
 	lightSampleStepSize = 7;
-	lightSampleSize = 
+	lightSampleSize =
 		lightSampleBootSize + // To generate eye ray
 		maxPathDepth.depth * lightSampleStepSize; // For each path vertex
 }
@@ -1125,6 +1508,12 @@ PropertiesUPtr PathTracer::ToProperties(const Properties &cfg) {
 			cfg.Get(GetDefaultProps()->Get("path.hybridbackforward.enable")) <<
 			cfg.Get(GetDefaultProps()->Get("path.hybridbackforward.partition")) <<
 			cfg.Get(GetDefaultProps()->Get("path.hybridbackforward.glossinessthreshold")) <<
+			cfg.Get(GetDefaultProps()->Get("path.mnee.enable")) <<
+			cfg.Get(GetDefaultProps()->Get("path.mnee.maxiterations")) <<
+			cfg.Get(GetDefaultProps()->Get("path.mnee.maxspecular")) <<
+			cfg.Get(GetDefaultProps()->Get("path.guiding.enable")) <<
+			cfg.Get(GetDefaultProps()->Get("path.guiding.tablefile")) <<
+			cfg.Get(GetDefaultProps()->Get("path.spectral.enable")) <<
 			cfg.Get(GetDefaultProps()->Get("path.russianroulette.depth")) <<
 			cfg.Get(GetDefaultProps()->Get("path.russianroulette.cap")) <<
 			cfg.Get(GetDefaultProps()->Get("path.clamping.variance.maxvalue")) <<
@@ -1142,6 +1531,12 @@ PropertiesUPtr PathTracer::GetDefaultProps() {
 			Property("path.hybridbackforward.enable")(false) <<
 			Property("path.hybridbackforward.partition")(0.8) <<
 			Property("path.hybridbackforward.glossinessthreshold")(.05f) <<
+			Property("path.mnee.enable")(false) <<
+			Property("path.mnee.maxiterations")(12) <<
+			Property("path.mnee.maxspecular")(1) <<
+			Property("path.guiding.enable")(false) <<
+			Property("path.guiding.tablefile")("") <<
+			Property("path.spectral.enable")(false) <<
 			Property("path.pathdepth.total")(6) <<
 			Property("path.pathdepth.diffuse")(4) <<
 			Property("path.pathdepth.glossy")(4) <<

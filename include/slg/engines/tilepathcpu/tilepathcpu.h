@@ -23,6 +23,7 @@
 #include "luxrays/utils/thread.h"
 #include "slg/engines/cpurenderengine.h"
 #include "slg/engines/pathtracer.h"
+#include "slg/engines/pathguiding.h"
 #include "slg/samplers/sampler.h"
 #include "slg/film/film.h"
 #include "slg/film/filters/filter.h"
@@ -91,6 +92,7 @@ protected:
 	u_int aaSamples;
 
 	PhotonGICache *photonGICache;
+	PathGuidingCache *pathGuidingCache;
 	PathTracer pathTracer;
 
 private:

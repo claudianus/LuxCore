@@ -32,11 +32,13 @@ using namespace slg;
 
 PathCPURenderEngine::PathCPURenderEngine(RenderConfigRef rcfg) :
 		CPUNoTileRenderEngine(rcfg), photonGICache(nullptr),
+		pathGuidingCache(nullptr),
 		lightSampleSplatter(nullptr), lightSamplerSharedData(nullptr) {
 }
 
 PathCPURenderEngine::~PathCPURenderEngine() {
 	delete photonGICache;
+	delete pathGuidingCache;
 }
 
 void PathCPURenderEngine::InitFilm() {
@@ -142,6 +144,22 @@ void PathCPURenderEngine::StartLockLess() {
 	pathTracer.SetPhotonGICache(photonGICache);
 
 	//--------------------------------------------------------------------------
+	// Allocate path guiding cache if enabled (P1-3 M1, CPU only)
+	//--------------------------------------------------------------------------
+
+	delete pathGuidingCache;
+	pathGuidingCache = nullptr;
+	if (cfg.Get(PathTracer::GetDefaultProps()->Get("path.guiding.enable")).Get<bool>()) {
+		const BSphere &bsphere = renderConfig.GetScene().GetSceneBSphere();
+		const Point cubeMin(bsphere.center.x - bsphere.rad,
+				bsphere.center.y - bsphere.rad,
+				bsphere.center.z - bsphere.rad);
+		pathGuidingCache = new PathGuidingCache(cubeMin, 2.f * bsphere.rad);
+		SLG_LOG("[PathCPURenderEngine] Path guiding (M1) enabled");
+	}
+	pathTracer.SetPathGuidingCache(pathGuidingCache);
+
+	//--------------------------------------------------------------------------
 
 	CPUNoTileRenderEngine::StartLockLess();
 }
@@ -150,6 +168,14 @@ void PathCPURenderEngine::StopLockLess() {
 	CPUNoTileRenderEngine::StopLockLess();
 
 	pathTracer.DeletePixelFilterDistribution();
+
+	// Table export for GPU training flow (M2b): dump the frozen read
+	// side when LUX_PG_DUMP is set.
+	if (pathGuidingCache) {
+		const char *dumpPath = getenv("LUX_PG_DUMP");
+		if (dumpPath && dumpPath[0])
+			pathGuidingCache->Save(dumpPath);
+	}
 
 	delete photonGICache;
 	photonGICache = nullptr;

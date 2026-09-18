@@ -31,6 +31,7 @@
 #include "slg/textures/band.h"
 #include "slg/textures/bilerp.h"
 #include "slg/textures/blackbody.h"
+#include "slg/textures/blackbodylut.h"
 #include "slg/textures/blender_texture.h"
 #include "slg/textures/bombing.h"
 #include "slg/textures/brick.h"
@@ -41,6 +42,7 @@
 #include "slg/textures/constfloat3.h"
 #include "slg/textures/cloud.h"
 #include "slg/textures/densitygrid.h"
+#include "slg/textures/whitenoise.h"
 #include "slg/textures/distort.h"
 #include "slg/textures/dots.h"
 #include "slg/textures/fbm.h"
@@ -330,6 +332,24 @@ u_int CompiledScene::CompileTextureOpsGenericBumpMap(const u_int texIndex) {
 	return evalOpStackSize;
 }
 
+// Push an eval op that opens/closes a raw-RGB scope for spectral leaf
+// upsampling (device-side mirror of CPU Spectral::ScopePause). The ops carry
+// no stack effect; they only bump the raw-depth counter seen by leaf
+// producers inside Texture_EvalOp().
+void CompiledScene::PushSpectralPauseStartOp(const u_int texIndex) {
+	slg::ocl::TextureEvalOp op;
+	op.texIndex = texIndex;
+	op.evalType = slg::ocl::TextureEvalOpType::EVAL_SPECTRUM_PAUSE_START;
+	texEvalOps.push_back(op);
+}
+
+void CompiledScene::PushSpectralPauseEndOp(const u_int texIndex) {
+	slg::ocl::TextureEvalOp op;
+	op.texIndex = texIndex;
+	op.evalType = slg::ocl::TextureEvalOpType::EVAL_SPECTRUM_PAUSE_END;
+	texEvalOps.push_back(op);
+}
+
 u_int CompiledScene::CompileTextureOps(const u_int texIndex,
 		const slg::ocl::TextureEvalOpType opType) {
 	// Translate textures to texture evaluate ops
@@ -344,7 +364,6 @@ u_int CompiledScene::CompileTextureOps(const u_int texIndex,
 		case slg::ocl::CONST_FLOAT:
 		case slg::ocl::CONST_FLOAT3:
 		case slg::ocl::IMAGEMAP:
-		case slg::ocl::BLACKBODY_TEX:
 		case slg::ocl::IRREGULARDATA_TEX:
 		case slg::ocl::OBJECTID_TEX:
 		case slg::ocl::OBJECTID_COLOR_TEX:
@@ -412,6 +431,31 @@ u_int CompiledScene::CompileTextureOps(const u_int texIndex,
 		//----------------------------------------------------------------------
 		// Not constant textures with sub-nodes
 		//----------------------------------------------------------------------
+		case slg::ocl::BLACKBODY_TEX: {
+			switch (opType) {
+				case slg::ocl::TextureEvalOpType::EVAL_FLOAT:
+				case slg::ocl::TextureEvalOpType::EVAL_SPECTRUM: {
+					// The temperature is a texture input on the textured path:
+					// push its float eval, the op pops it and pushes the result.
+					// A constant temperature has no input. The result can be
+					// wider than the freed input slot (float in, spectrum out),
+					// so the peak is bounded below by the result width.
+					if (tex->blackBody.temperatureTexIndex != NULL_INDEX)
+						evalOpStackSize += CompileTextureOps(tex->blackBody.temperatureTexIndex,
+								slg::ocl::TextureEvalOpType::EVAL_FLOAT);
+					evalOpStackSize = Max(evalOpStackSize,
+							(u_int)((opType == slg::ocl::TextureEvalOpType::EVAL_FLOAT) ? 1 : 3));
+					break;
+				}
+				case slg::ocl::TextureEvalOpType::EVAL_BUMP: {
+					evalOpStackSize += CompileTextureOpsGenericBumpMap(texIndex);
+					break;
+				}
+				default:
+					throw runtime_error("Unknown op. type in CompiledScene::CompileTextureOps(" + ToString(tex->type) + "): " + ToString(opType));
+			}
+			break;
+		}
 		case slg::ocl::SCALE_TEX: {
 			switch (opType) {
 				case slg::ocl::TextureEvalOpType::EVAL_FLOAT:
@@ -596,7 +640,11 @@ u_int CompiledScene::CompileTextureOps(const u_int texIndex,
 			switch (opType) {
 				case slg::ocl::TextureEvalOpType::EVAL_FLOAT:
 				case slg::ocl::TextureEvalOpType::EVAL_SPECTRUM: {
+					// HSV performs RGB-space math on the child: evaluate the
+					// subtree in raw RGB (CPU Spectral::ScopePause equivalent)
+					PushSpectralPauseStartOp(texIndex);
 					evalOpStackSize += CompileTextureOps(tex->hsvTex.texIndex, slg::ocl::TextureEvalOpType::EVAL_SPECTRUM);
+					PushSpectralPauseEndOp(texIndex);
 					evalOpStackSize += CompileTextureOps(tex->hsvTex.hueTexIndex, slg::ocl::TextureEvalOpType::EVAL_FLOAT);
 					evalOpStackSize += CompileTextureOps(tex->hsvTex.satTexIndex, slg::ocl::TextureEvalOpType::EVAL_FLOAT);
 					evalOpStackSize += CompileTextureOps(tex->hsvTex.valTexIndex, slg::ocl::TextureEvalOpType::EVAL_FLOAT);
@@ -652,8 +700,10 @@ u_int CompiledScene::CompileTextureOps(const u_int texIndex,
 			switch (opType) {
 				case slg::ocl::TextureEvalOpType::EVAL_FLOAT:
 				case slg::ocl::TextureEvalOpType::EVAL_SPECTRUM: {
+					PushSpectralPauseStartOp(texIndex);
 					evalOpStackSize += CompileTextureOps(tex->dotProductTex.tex1Index, slg::ocl::TextureEvalOpType::EVAL_SPECTRUM);
 					evalOpStackSize += CompileTextureOps(tex->dotProductTex.tex2Index, slg::ocl::TextureEvalOpType::EVAL_SPECTRUM);
+					PushSpectralPauseEndOp(texIndex);
 					break;
 				}
 				case slg::ocl::TextureEvalOpType::EVAL_BUMP: {
@@ -754,7 +804,9 @@ u_int CompiledScene::CompileTextureOps(const u_int texIndex,
 			switch (opType) {
 				case slg::ocl::TextureEvalOpType::EVAL_FLOAT:
 				case slg::ocl::TextureEvalOpType::EVAL_SPECTRUM: {
+					PushSpectralPauseStartOp(texIndex);
 					evalOpStackSize += CompileTextureOps(tex->splitFloat3Tex.texIndex, slg::ocl::TextureEvalOpType::EVAL_SPECTRUM);
+					PushSpectralPauseEndOp(texIndex);
 					break;
 				}
 				case slg::ocl::TextureEvalOpType::EVAL_BUMP: {
@@ -811,7 +863,9 @@ u_int CompiledScene::CompileTextureOps(const u_int texIndex,
 					evalOpStackSize += 3;
 					break;
 				case slg::ocl::TextureEvalOpType::EVAL_BUMP:
+					PushSpectralPauseStartOp(texIndex);
 					evalOpStackSize += CompileTextureOps(tex->normalMap.texIndex, slg::ocl::TextureEvalOpType::EVAL_SPECTRUM);
+					PushSpectralPauseEndOp(texIndex);
 					break;
 				default:
 					throw runtime_error("Unknown op. type in CompiledScene::CompileTextureOps(" + ToString(tex->type) + "): " + ToString(opType));
@@ -1013,6 +1067,23 @@ u_int CompiledScene::CompileTextureOps(const u_int texIndex,
 				case slg::ocl::TextureEvalOpType::EVAL_FLOAT:
 				case slg::ocl::TextureEvalOpType::EVAL_SPECTRUM: {
 					evalOpStackSize += CompileTextureOps(tex->randomTex.texIndex, slg::ocl::TextureEvalOpType::EVAL_FLOAT);
+					break;
+				}
+				case slg::ocl::TextureEvalOpType::EVAL_BUMP: {
+					evalOpStackSize += CompileTextureOpsGenericBumpMap(texIndex);
+					break;
+				}
+				default:
+					throw runtime_error("Unknown op. type in CompiledScene::CompileTextureOps(" + ToString(tex->type) + "): " + ToString(opType));
+			}
+			break;
+		}
+		case slg::ocl::WHITENOISE_TEX: {
+			switch (opType) {
+				case slg::ocl::TextureEvalOpType::EVAL_FLOAT:
+				case slg::ocl::TextureEvalOpType::EVAL_SPECTRUM: {
+					// The seed is a 3D vector: push it as a spectrum
+					evalOpStackSize += CompileTextureOps(tex->whiteNoiseTex.texIndex, slg::ocl::TextureEvalOpType::EVAL_SPECTRUM);
 					break;
 				}
 				case slg::ocl::TextureEvalOpType::EVAL_BUMP: {
@@ -2033,6 +2104,14 @@ void CompiledScene::CompileTextures() {
 
 				tex->type = slg::ocl::BLACKBODY_TEX;
 				ASSIGN_SPECTRUM(tex->blackBody.rgb, bbt.GetRGB());
+				tex->blackBody.temperature = bbt.GetTemperature();
+				tex->blackBody.temperatureTexIndex = (bbt.GetTemperatureTex() == nullptr) ?
+						NULL_INDEX : scene.GetTextures().GetTextureIndex(*bbt.GetTemperatureTex());
+				// The LUT stores the normalized white point; recover the raw
+				// scale when .normalize is off (CPU BlackBodyLutRGB does the
+				// same via SLG_BLACKBODY_RAW_SCALE).
+				tex->blackBody.rgbScale = bbt.GetNormalize() ?
+						1.f : SLG_BLACKBODY_RAW_SCALE;
 				break;
 			}
 			case IRREGULARDATA_TEX: {
@@ -2265,6 +2344,15 @@ void CompiledScene::CompileTextures() {
 				tex->type = slg::ocl::RANDOM_TEX;
 				auto& t1 = rt.GetTexture();
 				tex->randomTex.texIndex = scene.GetTextures().GetTextureIndex(t1);
+				break;
+			}
+			case WHITENOISE_TEX: {
+				auto& wnt = dynamic_cast<const WhiteNoiseTexture &>(t);
+
+				tex->type = slg::ocl::WHITENOISE_TEX;
+				auto& t1 = wnt.GetTexture();
+				tex->whiteNoiseTex.texIndex = scene.GetTextures().GetTextureIndex(t1);
+				tex->whiteNoiseTex.seedOffset = wnt.GetSeedOffset();
 				break;
 			}
 			case WIREFRAME_TEX: {

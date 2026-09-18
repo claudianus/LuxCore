@@ -42,6 +42,7 @@
 #include "slg/slg.h"
 #include "slg/engines/pathoclbase/pathoclbase.h"
 #include "slg/engines/caches/photongi/photongicache.h"
+#include "slg/engines/pathguiding.h"
 #include "slg/kernels/kernels.h"
 #include "slg/renderconfig.h"
 #include "slg/film/filters/filter.h"
@@ -60,7 +61,9 @@ using namespace std;
 PathOCLBaseRenderEngine::PathOCLBaseRenderEngine(RenderConfigRef rcfg,
 		const bool supportsNativeThreads) :	OCLRenderEngine(rcfg, supportsNativeThreads),
 		compiledScene(nullptr), oclSampler(nullptr),
-		oclPixelFilter(nullptr), photonGICache(nullptr), lightSamplerSharedData(nullptr) {
+		oclPixelFilter(nullptr), photonGICache(nullptr), lightSamplerSharedData(nullptr),
+		guideCubeSize(1.f), guideHasTable(false), guideCache(nullptr) {
+	guideCubeMin[0] = guideCubeMin[1] = guideCubeMin[2] = 0.f;
 	writeKernelsToFile = false;
 
 	//--------------------------------------------------------------------------
@@ -137,6 +140,20 @@ PathOCLBaseRenderEngine::PathOCLBaseRenderEngine(RenderConfigRef rcfg,
 		}
 	}
 
+#if defined(__APPLE__) && !defined(LUXRAYS_DISABLE_METAL)
+	//--------------------------------------------------------------------------
+	// Add Metal devices
+	//--------------------------------------------------------------------------
+
+	SLG_LOG("Metal devices used:");
+	for (IntersectionDeviceRef dev : devs) {
+		if (dev.GetDeviceDesc().GetType() & DEVICE_TYPE_METAL_ALL) {
+			SLG_LOG("[" << dev.GetName() << "]");
+			intersectionDevices.push_back(dev);
+		}
+	}
+#endif
+
 	//--------------------------------------------------------------------------
 	// Add Native devices
 	//--------------------------------------------------------------------------
@@ -171,6 +188,7 @@ PathOCLBaseRenderEngine::~PathOCLBaseRenderEngine() {
 
 	delete compiledScene;
 	delete photonGICache;
+	delete guideCache;
 	delete oclSampler;
 	delete oclPixelFilter;
 }
@@ -214,6 +232,23 @@ void PathOCLBaseRenderEngine::InitFilm() {
 		GetFilm().hwEnable = false;
 	}
 
+	// Run the film hardware image pipeline on the same device used for
+	// rendering (the film creates its own hardware context and would
+	// otherwise auto-select a - possibly different - device, i.e. OpenCL
+	// on a Metal session). Explicit film.hw.device settings have priority.
+	if (GetFilm().hwEnable && (GetFilm().hwDeviceIndex < 0) &&
+			GetFilm().hwDeviceName.empty()) {
+		for (DeviceDescriptionRef desc : selectedDeviceDescs) {
+			if (desc.GetType() & DEVICE_TYPE_ALL_HARDWARE) {
+				GetFilm().hwDeviceName = desc.GetName();
+				GetFilm().hwDeviceType = desc.GetType();
+				SLG_LOG("Film hardware image pipeline device: " << desc.GetName() <<
+						" (Type: " << DeviceDescription::GetDeviceType(desc.GetType()) << ")");
+				break;
+			}
+		}
+	}
+
 	GetFilm().AddChannel(Film::RADIANCE_PER_PIXEL_NORMALIZED);
 
 	// pathTracer has not yet been initialized
@@ -237,6 +272,7 @@ string PathOCLBaseRenderEngine::GetCachedKernelsHash(const RenderConfig &renderC
 	const bool useCPUs = cfg.Get(GetDefaultProps()->Get("opencl.cpu.use")).Get<bool>();
 	const bool useGPUs = cfg.Get(GetDefaultProps()->Get("opencl.gpu.use")).Get<bool>();
 	const string oclDeviceConfig = cfg.Get(GetDefaultProps()->Get("opencl.devices.select")).Get<string>();
+	const bool spectralEnable = cfg.Get(PathTracer::GetDefaultProps()->Get("path.spectral.enable")).Get<bool>();
 
 	stringstream ssParams;
 	ssParams.precision(6);
@@ -246,7 +282,8 @@ string PathOCLBaseRenderEngine::GetCachedKernelsHash(const RenderConfig &renderC
 			epsilonMax << "##" <<
 			useCPUs << "##" <<
 			useGPUs << "##" <<
-			oclDeviceConfig;
+			oclDeviceConfig << "##" <<
+			spectralEnable;
 
 	const string kernelSource = PathOCLBaseOCLRenderThread::GetKernelSources();
 
@@ -292,6 +329,41 @@ void PathOCLBaseRenderEngine::StartLockLess() {
 	//--------------------------------------------------------------------------
 
 	oclSampler = Sampler::FromPropertiesOCL(cfg);
+
+	// Path guiding (P1-3 M2b-2): GPU samples a frozen coarse table while
+	// the CPU-side cache trains from GPU-drained records. An optional
+	// table file (path.guiding.tablefile) seeds training; otherwise the
+	// cache starts empty and guides once warm (cold start is pure BSDF).
+	guideHasTable = false;
+	guideTable.clear();
+	delete guideCache;
+	guideCache = nullptr;
+	if (cfg.Get(Property("path.guiding.enable")(false)).Get<bool>()) {
+		const string tableFile = cfg.Get(Property("path.guiding.tablefile")("")).Get<string>();
+		if (!tableFile.empty()) {
+			guideCache = PathGuidingCache::Load(tableFile);
+			if (!guideCache) {
+				SLG_LOG("WARNING: unable to load path guiding table file: " + tableFile);
+			} else {
+				SLG_LOG("[PathOCLBaseRenderEngine] Path guiding (M2b) table loaded: " + tableFile);
+			}
+		}
+		if (!guideCache) {
+			const BSphere &bsphere = renderConfig.GetScene().GetSceneBSphere();
+			guideCache = new PathGuidingCache(
+					Point(bsphere.center.x - bsphere.rad,
+							bsphere.center.y - bsphere.rad,
+							bsphere.center.z - bsphere.rad),
+					2.f * bsphere.rad);
+		}
+		const luxrays::Point cubeMin = guideCache->GetCubeMin();
+		guideCubeMin[0] = cubeMin.x;
+		guideCubeMin[1] = cubeMin.y;
+		guideCubeMin[2] = cubeMin.z;
+		guideCubeSize = guideCache->GetCubeSize();
+		guideCache->SnapshotCoarseTable(&guideTable);
+		guideHasTable = true;
+	}
 
 	//--------------------------------------------------------------------------
 	// Filter

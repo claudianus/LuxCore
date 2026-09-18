@@ -20,6 +20,7 @@
 
 #include <boost/lexical_cast.hpp>
 #include <boost/algorithm/string/replace.hpp>
+#include <cstdio>
 
 #include "luxcore/cfg.h"
 #include "luxrays/core/geometry/transform.h"
@@ -32,6 +33,7 @@
 #include "slg/renderconfig.h"
 #include "slg/engines/pathoclbase/pathoclbase.h"
 #include "slg/samplers/sobol.h"
+#include "slg/samplers/pmj02.h"
 #include "slg/utils/pathinfo.h"
 
 using namespace std;
@@ -301,6 +303,88 @@ void PathOCLBaseOCLRenderThread::InitPhotonGI() {
 	}
 }
 
+void PathOCLBaseOCLRenderThread::InitGuide() {
+	// Path guiding table chunks (16 x 4224B): small uploads land reliably
+	if (renderEngine->guideHasTable && renderEngine->guideTable.size() > 0) {
+		for (u_int i = 0u; i < 16u; ++i) {
+			intersectionDevice.AllocBufferRO(&guideChunkBuff[i],
+					&renderEngine->guideTable[i * 32u * 33u],
+					32u * 33u * sizeof(float), "Path guiding table chunk");
+		}
+	} else {
+		for (u_int i = 0u; i < 16u; ++i)
+			intersectionDevice.FreeBuffer(&guideChunkBuff[i]);
+	}
+
+	// Path guiding (P1-3 M2b-2): 16 training-record buffers (4KB each,
+	// 256 float4 records; 4KB is the reliable transfer size on this
+	// backend). Zeroed at init so the drain only sees fresh writes.
+	if (renderEngine->guideHasTable) {
+		static float recZeros[1024] = { 0.f };
+		for (u_int i = 0u; i < 16u; ++i) {
+			intersectionDevice.AllocBufferRW(&guideRecBuff[i], nullptr,
+				256u * 4u * sizeof(float), "Path guiding training records");
+			intersectionDevice.EnqueueWriteBuffer(guideRecBuff[i], CL_TRUE,
+					1024u * sizeof(float), recZeros);
+		}
+	} else {
+		for (u_int i = 0u; i < 16u; ++i)
+			intersectionDevice.FreeBuffer(&guideRecBuff[i]);
+	}
+
+	// Guiding stats (always allocated when guiding is on)
+	if (renderEngine->guideHasTable) {
+		u_int initVals[4] = {0u, 0u, 0u, 0u};
+		intersectionDevice.AllocBuffer(&guideDbgBuff, BUFFER_TYPE_READ_WRITE, initVals,
+			4 * sizeof(u_int), "Path guiding debug counters");
+	} else {
+		intersectionDevice.FreeBuffer(&guideDbgBuff);
+	}
+}
+
+void PathOCLBaseOCLRenderThread::DrainGuide() {
+	if (!renderEngine->guideHasTable || !renderEngine->guideCache)
+		return;
+	// Read back the 16 record buffers (first 1K floats = 256 records each;
+	// reads above ~4KB silently fail on this backend) and apply to the
+	// CPU-side write side (RecordBin validates + clamps).
+	for (u_int b = 0u; b < 16u; ++b) {
+		if (!guideRecBuff[b])
+			continue;
+		float rec[1024];
+		intersectionDevice.EnqueueReadBuffer(guideRecBuff[b], CL_TRUE,
+				1024u * sizeof(float), rec);
+		for (u_int t = 0u; t < 256u; ++t) {
+			const float *r = &rec[(size_t)t * 4u];
+			if (!(r[3] > .5f && r[3] < 1.5f))
+				continue;
+			const u_int cell = (u_int)r[0];
+			const u_int bin = (u_int)r[1];
+			renderEngine->guideCache->RecordBin(cell, bin, r[2]);
+		}
+
+	}
+
+	// New training round every 10 drains + re-upload coarse chunks
+	// (small uploads land). 10 drains x 4K records warms the table.
+	{
+		static u_int drainCount = 0u;
+		if (++drainCount >= 10u) {
+			drainCount = 0u;
+			renderEngine->guideCache->ForceSwap();
+			std::vector<float> coarse;
+			renderEngine->guideCache->SnapshotCoarseTable(&coarse);
+			for (u_int i = 0u; i < 16u; ++i) {
+				if (!guideChunkBuff[i])
+					continue;
+				intersectionDevice.EnqueueWriteBuffer(guideChunkBuff[i], CL_TRUE,
+						32u * 33u * sizeof(float),
+						&coarse[(size_t)i * 32u * 33u]);
+			}
+		}
+	}
+}
+
 void PathOCLBaseOCLRenderThread::InitImageMaps() {
 	CompiledScene *cscene = renderEngine->compiledScene;
 
@@ -377,6 +461,17 @@ void PathOCLBaseOCLRenderThread::InitSamplerSharedDataBuffer() {
 
 		// Plus the Sobol directions array
 		size += sizeof(u_int) * renderEngine->pathTracer.eyeSampleSize * SOBOL_BITS;
+	} else if (renderEngine->oclSampler->type == slg::ocl::PMJ02SAMPLER) {
+		// Same header as Sobol (seedBase/bucketIndex/filmRegionPixelCount)
+		size += sizeof(slg::ocl::SobolSamplerSharedData);
+
+		// Plus the a pass field for each pixel
+		size += sizeof(u_int) * filmRegionPixelCount;
+
+		// Plus the PMJ02 tables (pairs x samples x xy floats)
+		size += sizeof(float) * 2 *
+				renderEngine->oclSampler->pmj02.tablePairs *
+				renderEngine->oclSampler->pmj02.tableSamples;
 	} else if (renderEngine->oclSampler->type == slg::ocl::TILEPATHSAMPLER) {
 		size += sizeof(slg::ocl::TilePathSamplerSharedData);
 
@@ -430,6 +525,31 @@ void PathOCLBaseOCLRenderThread::InitSamplerSharedDataBuffer() {
 		// Write the data
 		intersectionDevice.EnqueueWriteBuffer(samplerSharedDataBuff, CL_TRUE, size, buffer);
 		
+	} else if (renderEngine->oclSampler->type == slg::ocl::PMJ02SAMPLER) {
+		auto _buffer = std::make_unique<char[]>(size);
+		auto buffer = _buffer.get();
+
+		// Same header layout as Sobol (the kernel reuses its offsets)
+		slg::ocl::SobolSamplerSharedData *sssd = (slg::ocl::SobolSamplerSharedData *)buffer;
+
+		sssd->seedBase = renderEngine->seedBase;
+		sssd->bucketIndex = 0;
+		sssd->filmRegionPixelCount = filmRegionPixelCount;
+
+		// Pass values start at 0 (PMJ02 has no degenerate early points)
+		u_int *passBuffer = (u_int *)(buffer + sizeof(slg::ocl::SobolSamplerSharedData));
+		fill(passBuffer, passBuffer + filmRegionPixelCount, 0u);
+
+		// PMJ02 tables, pair after pair
+		float *tables = (float *)(buffer + sizeof(slg::ocl::SobolSamplerSharedData) +
+				sizeof(u_int) * filmRegionPixelCount);
+		PMJ02Sampler::FillDeviceTables(
+				renderEngine->oclSampler->pmj02.tablePairs,
+				renderEngine->oclSampler->pmj02.tableSamples,
+				renderEngine->seedBase, tables);
+
+		// Write the data
+		intersectionDevice.EnqueueWriteBuffer(samplerSharedDataBuff, CL_TRUE, size, buffer);
 	} else if (renderEngine->oclSampler->type == slg::ocl::TILEPATHSAMPLER) {
 		// TilePathSamplerSharedData is updated in PathOCLBaseOCLRenderThread::UpdateSamplerData()
 		
@@ -472,7 +592,13 @@ void PathOCLBaseOCLRenderThread::InitSamplesBuffer() {
 		}
 		case  slg::ocl::METROPOLIS: {
 			const size_t sampleResultSize = sizeof(slg::ocl::SampleResult);
-			sampleSize += 2 * sizeof(float) + 5 * sizeof(u_int) + sampleResultSize;	
+			sampleSize += 2 * sizeof(float) + 5 * sizeof(u_int) + sampleResultSize;
+			break;
+		}
+		case slg::ocl::PMJ02SAMPLER: {
+			// Same per-task cursor state as RandomSample
+			// (bucketIndex, pixelOffset, passOffset, pass)
+			sampleSize += sizeof(slg::ocl::RandomSample);
 			break;
 		}
 		case slg::ocl::SOBOL: {
@@ -511,6 +637,9 @@ void PathOCLBaseOCLRenderThread::InitSampleDataBuffer() {
 	} else if (renderEngine->oclSampler->type == slg::ocl::SOBOL) {
 		// To store IDX_SCREEN_X and IDX_SCREEN_Y
 		uDataSize = 2 * sizeof(float);
+	} else if (renderEngine->oclSampler->type == slg::ocl::PMJ02SAMPLER) {
+		// To store IDX_SCREEN_X and IDX_SCREEN_Y
+		uDataSize = 2 * sizeof(float);
 	} else if (renderEngine->oclSampler->type == slg::ocl::METROPOLIS) {
 		// Metropolis needs 2 sets of samples, the current and the proposed mutation
 		uDataSize = 2 * sizeof(float) * renderEngine->pathTracer.eyeSampleSize;
@@ -526,6 +655,13 @@ void PathOCLBaseOCLRenderThread::InitSampleDataBuffer() {
 }
 
 void PathOCLBaseOCLRenderThread::InitRender() {
+	//--------------------------------------------------------------------------
+	// Path guiding frozen table first (M2b): small chunk uploads before
+	// all other buffers.
+	//--------------------------------------------------------------------------
+
+	InitGuide();
+
 	//--------------------------------------------------------------------------
 	// Film definition
 	//--------------------------------------------------------------------------
@@ -641,6 +777,20 @@ void PathOCLBaseOCLRenderThread::InitRender() {
 	//--------------------------------------------------------------------------
 
 	intersectionDevice.AllocBufferRW(&eyePathInfosBuff, nullptr, sizeof(slg::ocl::EyePathInfo) * taskCount, "PathInfo");
+
+	//--------------------------------------------------------------------------
+	// Allocate the ReSTIR DI per-pixel temporal reservoirs (zeroed: an
+	// all-zero cell means "no reservoir yet")
+	//--------------------------------------------------------------------------
+
+	{
+		const u_int *subRegion = renderEngine->GetFilm().GetSubRegion();
+		const u_int filmWidth = renderEngine->GetFilm().GetWidth();
+		const u_int reservoirCount = (subRegion[3] + 1) * filmWidth;
+		std::vector<slg::ocl::pathoclbase::RestirReservoir> zeroReservoirs(reservoirCount);
+		intersectionDevice.AllocBufferRW(&restirReservoirsBuff, zeroReservoirs.data(),
+				sizeof(slg::ocl::pathoclbase::RestirReservoir) * reservoirCount, "RestirReservoirs");
+	}
 
 	//--------------------------------------------------------------------------
 	// Allocate volume info buffers if required

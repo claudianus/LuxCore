@@ -42,6 +42,17 @@ OPENCL_FORCE_NOT_INLINE bool Scene_Intersect(
 
 	uint rayVolumeIndex = volInfo->currentVolumeIndex;
 
+#if defined(SLG_SPECTRAL)
+	// Propagate the path wavelengths: the volume texture evals read
+	// tmpHitPoint, everything shading-related reads bsdf->hitPoint.
+	if (sampleResult) {
+		tmpHitPoint->spectralW[0] = sampleResult->spectralW[0];
+		tmpHitPoint->spectralW[1] = sampleResult->spectralW[1];
+		tmpHitPoint->spectralW[2] = sampleResult->spectralW[2];
+		tmpHitPoint->spectralHeroAlive = sampleResult->spectralHeroAlive;
+	}
+#endif
+
 	if (hit) {
 		// Initialize the BSDF of the hit point
 		BSDF_Init(bsdf,
@@ -51,6 +62,15 @@ OPENCL_FORCE_NOT_INLINE bool Scene_Intersect(
 				volInfo
 				MATERIALS_PARAM
 				);
+
+#if defined(SLG_SPECTRAL)
+		if (sampleResult) {
+			bsdf->hitPoint.spectralW[0] = sampleResult->spectralW[0];
+			bsdf->hitPoint.spectralW[1] = sampleResult->spectralW[1];
+			bsdf->hitPoint.spectralW[2] = sampleResult->spectralW[2];
+			bsdf->hitPoint.spectralHeroAlive = sampleResult->spectralHeroAlive;
+		}
+#endif
 
 		rayVolumeIndex = bsdf->hitPoint.intoObject ? bsdf->hitPoint.exteriorVolumeIndex : bsdf->hitPoint.interiorVolumeIndex;
 	} else if (rayVolumeIndex == NULL_INDEX) {
@@ -91,6 +111,15 @@ OPENCL_FORCE_NOT_INLINE bool Scene_Intersect(
 
 			BSDF_InitVolume(bsdf, *throughShadowTransparency, mats, ray, rayVolumeIndex, t, passThrough);
 			volInfo->scatteredStart = true;
+
+#if defined(SLG_SPECTRAL)
+			if (sampleResult) {
+				bsdf->hitPoint.spectralW[0] = sampleResult->spectralW[0];
+				bsdf->hitPoint.spectralW[1] = sampleResult->spectralW[1];
+				bsdf->hitPoint.spectralW[2] = sampleResult->spectralW[2];
+				bsdf->hitPoint.spectralHeroAlive = sampleResult->spectralHeroAlive;
+			}
+#endif
 
 			return false;
 		}

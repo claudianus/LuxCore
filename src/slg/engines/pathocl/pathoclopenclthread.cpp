@@ -187,6 +187,11 @@ void PathOCLOpenCLRenderThread::RenderThreadImpl(std::stop_token stop_token) {
 
 			// Advance to next path state
 			EnqueueAdvancePathsKernel();
+
+			// Path guiding (P1-3 M2b-2): drain GPU training records
+			// every inner iteration (10ms-scale); new frozen round +
+			// re-upload every 10th drain (see DrainGuide)
+			DrainGuide();
 		}
 		totalIterations += iterations;
 
