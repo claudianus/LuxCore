@@ -17,13 +17,12 @@ claims backed by measured evidence.
 | DEP-1/DEP-2 | deps refresh (openvdb 13, robin-hood removal), v2.3.0/v2.4.0 dep releases | done, CI green |
 | A6-II/A6-III | persistent-scene incremental export, transform/material/geometry deltas, dupli-set refresh | done; `a6_persistent_scene_test.py` all PASS |
 | A5 | dupli/particle + point-cloud transform motion blur | done |
-| E9 deformation motion blur | vertex-motion series plumbing (Ph1), Metal HWRT descriptors + motion intersector fix (Ph2), swept-bound SW MBVH/OCL path (Ph3), Embree timesteps (Ph4), BlendLuxCore mesh export (Ph5) | done; `e9_parity_test.py` 4-backend parity PASS |
+| E9 deformation motion blur | vertex-motion series plumbing (Ph1), Metal HWRT descriptors + motion intersector fix (Ph2), swept-bound SW MBVH/OCL path (Ph3), Embree timesteps (Ph4), BlendLuxCore mesh export (Ph5), strand/hair control-point motion incl. Metal motion-curve AS + Blender adapter (Ph5b) | done; `e9_parity_test.py` 4-backend parity + `e9_strand_motion_test.py`/`e9_strand_motion_e2e_test.py` PASS |
 
 ## In flight / next
 
 | Track | Item | Notes |
 |---|---|---|
-| E9 Ph5b | Hair/curve deformation motion | strands tessellate to `ExtTriangleMesh` (SW/CPU) and emit Catmull-Rom CPs (Metal); needs per-step CP series → re-tessellated vertex series + `MTLAccelerationStructureMotionCurveGeometryDescriptor` on the curve-AS path |
 | E9 Ph6 | Validation scenes | animated character mesh, GN-deformed geometry, armature-driven hair, divergence-stress scene; A/B vs static + backend parity |
 | E9 leftovers | OptiX/CUDA motion geometry refresh | `OptixMotionGeometryDesc` vertex buffers; out of scope until the CUDA path is revived |
 | E2 | ReSTIR PT/GI/PG + RIS visibility term | current DI-only, ~2× spatial-reuse inefficiency |
@@ -38,7 +37,6 @@ claims backed by measured evidence.
   fallback. CUDA/OptiX support is stale (post-E8 codepaths untested).
 - Non-uniform motion step times are exact on MBVH/BVH/SW-OpenCL and
   approximated piecewise-uniformly on Metal HWRT and Embree.
-- Strand (hair) motion blur not yet implemented — see E9 Ph5b.
 - `PATHOCL` + `SOBOL` produced black frames in standalone tests once
   (unverified-path artifact); `TILEPATHOCL`/`TILEPATHSAMPLER` is the
   validated OCL config. Worth a dedicated triage before claiming PATHOCL
