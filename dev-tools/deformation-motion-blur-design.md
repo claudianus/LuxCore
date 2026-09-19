@@ -1,10 +1,42 @@
 # Deformation (vertex) motion blur — E9 design
 
-Status: **Phase 1 (plumbing) implemented.** Roadmap item E9 — engine-level
-per-vertex motion blur for meshes and curves. Adapter-side prerequisites
-(A5 step-collection infra) are done; backend acceleration is not started —
-meshes carrying a vertex series still render their static `vertices`
-(static fallback, same stance as E7 curve data in serialized scenes).
+Status: **Phase 1 (plumbing) + Phase 2 (Metal HWRT backend) implemented.**
+Roadmap item E9 — engine-level per-vertex motion blur for meshes and
+curves. Adapter-side prerequisites (A5 step-collection infra) are done.
+On Metal, meshes carrying a vertex series now render true deformation
+blur via `MTLAccelerationStructureMotionTriangleGeometryDescriptor`;
+other backends still render the static `vertices` fallback.
+
+Phase-2 surface (implemented, `src/luxrays/devices/metalrtaccel.mm`):
+
+- Motion-triangle geometry descriptor per vertex-motion leaf: all
+  keyframes packed into one `MTLBuffer`, each `MTLMotionKeyframeData`
+  referencing its slice (offset = step × vertexBytes), shared index
+  buffer from the constant topology. `motionKeyframeCount` /
+  `motionStartTime`/`motionEndTime` on the primitive AS descriptor.
+- Motion instance AS: when any leaf has a motion system or vertex
+  motion, instance descriptors switch to
+  `MTLAccelerationStructureMotionInstanceDescriptor` (uniform type
+  across the buffer). Transform keyframes are sampled uniformly over
+  `[startTime, endTime]` (Metal distributes keyframes uniformly;
+  LuxCore `MotionSystem` times may be nonuniform). Static leaves in a
+  motion instance AS get a single keyframe with a non-degenerate [0,1]
+  interval.
+- Motion kernel variant: `intersector<instancing, instance_motion,
+  primitive_motion, triangle_data[, curve_data]>` + timed
+  `intersect(ray, as, r.time)` — the timed overload only exists on
+  motion-tagged intersectors; on a plain `<instancing,...>` intersector
+  the time argument silently binds the uint-mask overload (0.5 → 0 →
+  every instance masked → all rays miss). This also fixed pre-existing
+  object-transform motion blur on Metal, which was broken by the same
+  overload resolution.
+- Regression test: `dev-tools/e9_metal_vertex_motion_test.py` —
+  emissive-marker quad in front of a static wall, narrow-shutter
+  fixed-pose checks (t≈0/0.25/0.5/1) + full-shutter sweep extent for
+  K=2/3/4 and nonuniform keyframe times.
+- Debug hook: `LUXRAYS_METAL_DBG_TIME=<t>` compiles the motion kernel
+  with a fixed ray time (isolates AS keyframe data from sampler-side
+  time distribution).
 
 Phase-1 surface (implemented):
 
@@ -105,7 +137,8 @@ control points get the same treatment — `curveCPs` becomes
 1. ~~ExtTriangleMesh vertex series + serialization/merge rules + scene
    property plumbing (no backend uses it yet — pure plumbing).~~ **Done**
    — see the Phase-1 surface list above.
-2. Metal motion geometry descriptor (primary GPU-first target).
+2. ~~Metal motion geometry descriptor (primary GPU-first target).~~
+   **Done** — see the Phase-2 surface list above.
 3. OpenCL swept-bound software path.
 4. Embree timestep path (CPU parity).
 5. BlendLuxCore mesh + hair export.
