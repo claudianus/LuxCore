@@ -125,3 +125,36 @@ Serialization intentionally excludes curve vectors: adding fields would break
 the binary scene format in both directions (old files lack them; new fields
 are unreadable by old code). A deserialized strands mesh simply falls back to
 its tessellated triangles.
+
+## Validation (2026-09, M5 Pro, Debug build)
+
+Scene: `scenes/strands/hair.scn` — 10k strands, 150k curve segments,
+180k control points, 9.29M tessellated triangles. Both paths render to
+completion with visually identical output (alpha/color attributes intact).
+
+| Path | Samples @30s | Notes |
+|---|---|---|
+| `LUXRAYS_METAL_CURVES=0` (triangles) | 847 | 9.29M tris, refine 0.25s |
+| native curves (default) | 651 | 9MB curve buffers, refine 0.20s |
+
+Native curves are ~24% slower in raw sample throughput on this scene —
+hair.scn uses extreme tessellation (62 tris/segment), which favors the
+triangle HW-RT path. The native path's value is memory (~1/100 primitive
+footprint), exact curve surfaces (no facets), and refinement speed; it
+is expected to pull ahead on dense production hair where tessellation
+quality must rise for close-ups and memory pressure dominates.
+
+### Bug found by fallback testing
+
+`LUXRAYS_METAL_CURVES=0` crashed in `ExtTriangleMesh::Merge`:
+`GetAlpha` asserted `vertIndex < alphas.GetLayerSize()` with layer size 0.
+
+Root cause: `ExtMeshProp(Layer)` (shared_ptr ctor) stored the pointer
+without setting `_size`. Every mesh built via the raw `shared_ptr` ctor
+path (strands alphas, scene/parseshapes UVs/cols/alphas) had
+`HasAlphas()==true` but `GetLayerSize()==0` — release builds silently
+read with no bound check; debug builds asserted.
+
+Fix: `ExtTriangleMesh::Init` normalizes any installed layer that carries
+a pointer but `_size==0` to the vertex count (per-vertex attribute
+contract). Covers all raw-ctor call sites uniformly.
