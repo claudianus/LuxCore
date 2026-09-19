@@ -158,3 +158,22 @@ read with no bound check; debug builds asserted.
 Fix: `ExtTriangleMesh::Init` normalizes any installed layer that carries
 a pointer but `_size==0` to the vertex count (per-vertex attribute
 contract). Covers all raw-ctor call sites uniformly.
+
+### Blender adapter integration (2026-09, BlendLuxCore headless)
+
+Headless Blender 5.2.1 render through the real adapter path:
+`hair_curves` datablock → `convert_hair_curves` →
+`Scene.DefineBlenderCurveStrands` (3000 segments / 3600 control points,
+200 strands × 15 segments) → PATHOCL on `MetalIntersect`.
+
+- Native run logged `Metal HWRT: native MTLAccelerationStructure path
+  active` — curve geometry entered the Metal AS, render completed.
+- `LUXRAYS_METAL_CURVES=0` run rendered the same scene through the
+  triangle path to completion.
+- Parity check at 256 spp: pixel diff native-vs-tri (mean 12.50) was
+  *smaller* than native-vs-native across seeds (mean 15.74) — output
+  differences are below Monte Carlo noise, so the paths are statistically
+  equivalent.
+- Parentless `hair_curves` correctly skipped UV/color export (warning
+  path exercised); per-strand `radius` attribute folded into
+  diameter/taper as designed.

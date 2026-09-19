@@ -27,7 +27,7 @@ ask for.
 | Blackbody + Whitenoise | [textures.md](textures.md) | `5d38878b6` | cornell/bb-test, whitenoise-* | CPU/OCL/Metal |
 | Hair + Disney | [hair.md](hair.md) + [disney.md](disney.md) | `a8785faa2` | strands, hairmat-test, cornell-disney | CPU/OCL/Metal |
 | Strand AOVs | [hair.md](hair.md) | `584fabbd1` | strands, strandu-test | CPU/OCL/Metal |
-| Metal native curves | [../dev-tools/metal_curve_design.md](../dev-tools/metal_curve_design.md) | `d32bfe3cd` | scenes/strands/hair.scn | **Apple only** (Metal HWRT) |
+| Metal native curves | [../dev-tools/metal_curve_design.md](../dev-tools/metal_curve_design.md) | `d32bfe3cd` | scenes/strands/hair.scn + BlendLuxCore adapter A/B (parity < MC noise) | **Apple only** (Metal HWRT) |
 | Lights plumbing | [restir-di.md](restir-di.md) | `4e40c8d4a` | manylights | CPU/OCL/Metal |
 | Film HW pipeline + OIDN | [oidn-film.md](oidn-film.md) | `30dc89ab3` | any render | OCL/Metal; OIDN=Metal validated* |
 | Blender adapter | [blender-adapter.md](blender-adapter.md) | BlendLuxCore repo | .blend scenes | all; Metal opt = Apple |
