@@ -303,6 +303,7 @@ void ExtTriangleMesh::SetVertexMotion(
 
 	motionVertTimes = std::move(stepTimes);
 	motionVertSteps = std::move(stepVerts);
+	cachedBBoxValid = false;
 }
 
 Point ExtTriangleMesh::GetVertexAtTime(const u_int vertIndex, const float time) const {
@@ -321,6 +322,30 @@ Point ExtTriangleMesh::GetVertexAtTime(const u_int vertIndex, const float time) 
 	const float w = (time - motionVertTimes[i0]) /
 		(motionVertTimes[i1] - motionVertTimes[i0]);
 	return Lerp(w, motionVertSteps[i0][vertIndex], motionVertSteps[i1][vertIndex]);
+}
+
+BBox ExtTriangleMesh::GetBBox() const {
+	if (!cachedBBoxValid) {
+		cachedBBox = TriangleMesh::GetBBox();
+		for (const auto &stepVerts : motionVertSteps) {
+			for (u_int i = 0; i < stepVerts.Count(); ++i)
+				cachedBBox = Union(cachedBBox, stepVerts[i]);
+		}
+
+		cachedBBoxValid = true;
+	}
+
+	return cachedBBox;
+}
+
+const ExtTriangleMesh *ExtTriangleMesh::FromMesh(const Mesh *mesh) {
+	if (const ExtInstanceTriangleMesh *imesh =
+			dynamic_cast<const ExtInstanceTriangleMesh *>(mesh))
+		return &imesh->GetExtTriangleMesh();
+	if (const ExtMotionTriangleMesh *mmesh =
+			dynamic_cast<const ExtMotionTriangleMesh *>(mesh))
+		return &mmesh->GetExtTriangleMesh();
+	return dynamic_cast<const ExtTriangleMesh *>(mesh);
 }
 
 NormalBuffer ExtTriangleMesh::ComputeNormals() {

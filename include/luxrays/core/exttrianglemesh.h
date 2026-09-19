@@ -428,12 +428,23 @@ public:
 	void ClearVertexMotion() {
 		motionVertTimes.clear();
 		motionVertSteps.clear();
+		cachedBBoxValid = false;
 	}
 	bool HasVertexMotion() const { return !motionVertSteps.empty(); }
 	u_int GetVertexMotionStepCount() const { return (u_int)motionVertSteps.size(); }
 	const std::vector<float> &GetVertexMotionTimes() const { return motionVertTimes; }
 	const VertexBuffer &GetVertexMotionStep(const u_int step) const { return motionVertSteps[step]; }
 	Point GetVertexAtTime(const u_int vertIndex, const float time) const;
+
+	// Swept bounds: with a vertex-motion series the bounding box spans the
+	// union of the base vertices and every motion step, so it is
+	// conservative for every shutter time.
+	virtual BBox GetBBox() const;
+
+	// Resolves instance/motion wrappers to the base ExtTriangleMesh they
+	// wrap (vertex motion and curve data live on the base mesh); returns
+	// nullptr for plain TriangleMesh.
+	static const ExtTriangleMesh *FromMesh(const Mesh *mesh);
 
 	NormalBuffer ComputeNormals();
 

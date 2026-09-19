@@ -336,13 +336,7 @@ kernel void Accelerator_Intersect_RayBuffer_HWRT_Motion(
 // both deformation and curve data live on the base mesh and compose with
 // leaf-level transforms.
 static const ExtTriangleMesh *ResolveExtTriangleMesh(const Mesh *mesh) {
-	if (const ExtInstanceTriangleMesh *imesh =
-			dynamic_cast<const ExtInstanceTriangleMesh *>(mesh))
-		return &imesh->GetExtTriangleMesh();
-	if (const ExtMotionTriangleMesh *mmesh =
-			dynamic_cast<const ExtMotionTriangleMesh *>(mesh))
-		return &mmesh->GetExtTriangleMesh();
-	return dynamic_cast<const ExtTriangleMesh *>(mesh);
+	return ExtTriangleMesh::FromMesh(mesh);
 }
 
 class MetalRTKernel : public HardwareIntersectionKernel {

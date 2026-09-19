@@ -1,11 +1,54 @@
 # Deformation (vertex) motion blur — E9 design
 
-Status: **Phase 1 (plumbing) + Phase 2 (Metal HWRT backend) implemented.**
+Status: **Phase 1 (plumbing) + Phase 2 (Metal HWRT backend) +
+Phase 3 (swept-bound software path) implemented.**
 Roadmap item E9 — engine-level per-vertex motion blur for meshes and
 curves. Adapter-side prerequisites (A5 step-collection infra) are done.
 On Metal, meshes carrying a vertex series now render true deformation
 blur via `MTLAccelerationStructureMotionTriangleGeometryDescriptor`;
-other backends still render the static `vertices` fallback.
+all other backends route through the software MBVH path (swept bounds +
+per-ray vertex interpolation). Embree still renders static (Phase 4).
+
+Phase-3 surface (implemented):
+
+- Swept bounds: `ExtTriangleMesh::GetBBox()` now unions the base
+  vertices with every motion step, so root-leaf bounds
+  (`MBVHAccel::Init`/`Update` and `DataSet::UpdateBBoxes`) stay
+  conservative. `BVHAccel::Init` widens each triangle's leaf-node bbox
+  to the union over all steps — traversal can reach every pose, while
+  misses still come from the interpolated triangle test.
+- Kernel (`include/luxrays/accelerators/mbvh.cl`): under
+  `MBVH_HAS_VERTEXMOTION` the accelerator gains three params —
+  `leafVertMotionDescs` (one `VertMotionDesc` per leaf reference,
+  indexed by `meshOffsetIndex`), the packed `vertMotionVerts`
+  (step-major) and `vertMotionTimes` arrays. On leaf entry the
+  descriptor is cached; per triangle the global page-encoded vertex
+  index is decoded back to the leaf-local index
+  (`v >> 29 * MBVH_VERTS_PAGE_SIZE + v & 0x1fffffff - staticVertOffset`
+  — valid for both single- and multi-page layouts), the surrounding
+  step pair is found by linear scan over the (small) step times, and
+  `mix()` interpolates the three corners at `ray.time`. Static leaves
+  (`vertCount == 0`) keep the original fetch path.
+- Upload (`mbvhaccelhw.cpp`): step buffers are packed contiguously per
+  unique leaf and shared between leaf references (instanced deforming
+  meshes don't duplicate memory); `MBVH_VERTS_PAGE_SIZE` is defined so
+  the kernel can decode indices. Buffers are allocated once at kernel
+  construction — `Update()` only refreshes nodes/transforms.
+- CPU parity: `MBVHAccel::Intersect` resolves the leaf base mesh once
+  per leaf entry via the new `ExtTriangleMesh::FromMesh` helper
+  (instance/motion wrappers share the base mesh's motion data) and
+  samples `GetVertexAtTime()` per triangle. The flat
+  `BVHAccel::Intersect` got the same treatment for
+  `accelerator.type=BVH` scenes.
+- Routing: `DataSet::Add` now flags `hasMotionBlur` for any mesh whose
+  base `ExtTriangleMesh` carries a vertex series — vertex-motion-only
+  scenes previously took the flat-BVH path and rendered statically.
+- Validation: `vertexmotion_test` grew 20 asserts (swept bbox,
+  MBVH hit/miss at t<0/0/0.5/1/>1, mixed static+motion leaves,
+  occluder-inside-swept-bound attribution, nonuniform K=3);
+  `dev-tools/e9_swaccel_vertex_motion_test.py` re-runs the Phase-2
+  scene with `LUXRAYS_METAL_HWRT=0` (cl2msl software kernel) —
+  all pose and sweep checks pass.
 
 Phase-2 surface (implemented, `src/luxrays/devices/metalrtaccel.mm`):
 
@@ -139,7 +182,8 @@ control points get the same treatment — `curveCPs` becomes
    — see the Phase-1 surface list above.
 2. ~~Metal motion geometry descriptor (primary GPU-first target).~~
    **Done** — see the Phase-2 surface list above.
-3. OpenCL swept-bound software path.
+3. ~~OpenCL swept-bound software path.~~ **Done** — see the Phase-3
+   surface list above.
 4. Embree timestep path (CPU parity).
 5. BlendLuxCore mesh + hair export.
 6. Validation scenes: animated character mesh, GN-deformed geometry,
