@@ -31,10 +31,16 @@ ask for.
 | Lights plumbing | [restir-di.md](restir-di.md) | `4e40c8d4a` | manylights | CPU/OCL/Metal |
 | Film HW pipeline + OIDN | [oidn-film.md](oidn-film.md) | `30dc89ab3` | any render | OCL/Metal; OIDN=Metal validated* |
 | Blender adapter | [blender-adapter.md](blender-adapter.md) | BlendLuxCore repo | .blend scenes | all; Metal opt = Apple |
-| Wavefront task queues (M1, opt-in) | [../dev-tools/wavefront-design.md](../dev-tools/wavefront-design.md) | `85a122a1e` cl2msl fix, `9c59522fe` queues (branch `feature/wavefront-queues`) | cornell | OCL/Metal; `LUXRAYS_WAVEFRONT_QUEUES=1` |
+| Wavefront task queues (M1+M2, opt-in) | [../dev-tools/wavefront-design.md](../dev-tools/wavefront-design.md) | `85a122a1e` cl2msl fix, `9c59522fe` M1, `f424a8552` M2 λ-bucketed queues (branch `feature/wavefront-queues`) | cornell, cornell-spectral | OCL/Metal; `LUXRAYS_WAVEFRONT_QUEUES=1` |
+| Deformation motion blur (E9, scoped) | [../dev-tools/deformation-motion-blur-design.md](../dev-tools/deformation-motion-blur-design.md) | `bc26dbd45` design doc | — | design only |
 
 > Engine/API plumbing and misc integration: `06b8b826d`, `8601eaa12`.
 > Example scenes: `64aad5c47`. This documentation: `481fea0d2`.
+> Maintenance: `45310f556` ExtMeshProp sizeless-layer fix (E7 fallback
+> regression), `3925d3248` robin_hood→tsl::robin_map, `861a5ea24` dead
+> vendored assets (~47MB). Regression automation:
+> `dev-tools/wavefront-regression.sh` (`abfe20a23`, strands_hair case
+> `f89210cf5`).
 
 ## How the criteria are met
 
