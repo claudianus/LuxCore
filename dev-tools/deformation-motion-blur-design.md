@@ -10,6 +10,31 @@ all other backends route through the software MBVH path (swept bounds +
 per-ray vertex interpolation). Embree uses native multi-timestep
 geometry (Phase 4).
 
+Phase-5 surface (implemented, BlendLuxCore repo):
+
+- `ExportedMesh` records an export-time topology signature
+  (`vert_count`, `loop_vertices` map) — only for objects with
+  `enable_motion_blur` under an enabled motion-blur camera.
+- `motion_blur.convert()` gained a vertex-step collection pass inside
+  the existing `frame_set` shutter loop (`_collect_vertex_step` /
+  `_sample_loop_points`): each step re-runs the mesh_converter vertex
+  pipeline (`to_mesh` → `calc_loop_triangles` → `split_faces` →
+  `co`/`vertex_index` foreach_get) on the evaluated object and keeps
+  the loop-expanded `(N,3)` positions — the same domain `DefineMeshExt`
+  exports `points` in. Samples dedupe per `mesh_key`, so objects
+  sharing an instanced mesh evaluate it once per step. A step whose
+  vertex/loop topology differs from the signature disables vertex
+  motion for that mesh (static fallback + notice).
+- `_build_vertex_motion` calls `Scene.SetMeshVertexMotion` per base
+  shape name with the same `frame_offsets` schedule used by transform
+  motion; identical step buffers are skipped. Objects whose final
+  shape is a wrapper (subdiv/displacement) are excluded — wrappers
+  build new meshes that cannot carry the base mesh's series.
+- Validation: `dev-tools/e9_vertex_motion_e2e_test.py` renders a
+  shape-key-deforming emissive quad headless (PATHOCL/Metal) — blurred
+  footprint span 143px vs static 88px, non-opted-in object identical to
+  static. All checks pass.
+
 Phase-4 surface (implemented, `src/luxrays/accelerators/embreeaccel.cpp`):
 
 - `ExportTriangleMesh` resolves the base mesh via
@@ -214,7 +239,10 @@ control points get the same treatment — `curveCPs` becomes
    surface list above.
 4. ~~Embree timestep path (CPU parity).~~ **Done** — see the Phase-4
    surface list above.
-5. BlendLuxCore mesh + hair export.
+5. ~~BlendLuxCore mesh export.~~ **Done** — see the Phase-5 surface list
+   above. Hair/strand export is still open: strands go through
+   `DefineBlenderStrands` (curve control points, not triangle vertices)
+   and need a core curve-point motion series first.
 6. Validation scenes: animated character mesh, GN-deformed geometry,
    armature-driven hair — A/B vs static, plus a divergence-stress scene.
 
