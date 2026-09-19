@@ -101,9 +101,15 @@ The upstream GitHub workflows (`.github/workflows/sample-builder.yml`,
   macOS 14+ + `LUXCORE_METAL_CURVES`). Known v1 limits: curve meshes as
   triangle lights mis-map in the hit→light reverse lookup; strand AOV
   parity vs the tessellated baseline is approximate by design.
-- **~6% systematic PATHCPU-vs-PATHOCL brightness difference** on bright
-  emissives was measured during blackbody validation (reproduces with a plain
-  `constfloat3`, i.e. pre-existing engine gap, not a feature bug) — under
-  investigation.
+- **PATHCPU-vs-PATHOCL brightness difference** on bright emissives — root
+  cause found and fixed in commit `10ecf93ec`. It was not an emission
+  evaluator bug but a **Metal HWRT static-scene intersection leak**: the
+  timed `intersect(ray, as, time)` overload returns no intersection on a
+  non-motion instance AS, so PATHOCL on Metal leaked camera rays to the
+  environment (~62% on the minimal parity scene). Fixed by gating the timed
+  overload behind `useMotionTime`. CPU/OpenCL were always correct.
+  Regression scenes: `scenes/parity/` (emissive-direct → `(4,4,4)`,
+  whiteenv → `(0,0,0)`, both exact on Metal now). Any residual CPU↔GPU
+  delta on complex scenes should be re-measured post-fix.
 - Opt-in / experimental stages are **default-off** until regression coverage
   lands.
