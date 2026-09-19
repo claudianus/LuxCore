@@ -7,7 +7,7 @@
   },
   "Dependencies": {
     "user": "claudianus",
-    "release": "2.3.0"
+    "release": "2.4.0"
   },
   "Build": {
     "gcc": "14",
