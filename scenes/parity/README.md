@@ -50,8 +50,12 @@ hits correctly; motion AS keep timed interpolation.
   0.02 — residual CPU↔GPU difference is Monte-Carlo noise from
   independent RNG streams, not a backend divergence.
 
-Gate guidance: assert the deterministic centre values in these scenes
-(exact equality is valid — they are single-bounce reads of constants).
-Do **not** gate stochastic renders per-pixel at <1e-3 — even same-backend
-re-seeds exceed that. For general scenes compare image means
-(<~1–2% at 64spp) or run to high-spp convergence.
+Gate guidance: `dev-tools/parity-regression.sh` runs these scenes on
+CPU + GPU and range-checks the centre pixels (4.0±0.20, 0.0+0.02).
+Exact equality is NOT stable here — the centre pixel's filter footprint
+grazes the quad edge, so samplers report 3.98–4.0 legitimately (Metal
+measured 3.9844 at 8spp, converging to 4.0 at 64spp). The band still
+catches the leak class (1.48 / 0.625) with huge margin. Do **not** gate
+stochastic renders per-pixel at <1e-3 — even same-backend re-seeds
+exceed that. For general scenes compare image means (<~1–2% at 64spp)
+or run to high-spp convergence.

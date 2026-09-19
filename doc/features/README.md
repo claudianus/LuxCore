@@ -40,7 +40,8 @@ ask for.
 > regression), `3925d3248` robin_hood→tsl::robin_map, `861a5ea24` dead
 > vendored assets (~47MB). Regression automation:
 > `dev-tools/wavefront-regression.sh` (`abfe20a23`, strands_hair case
-> `f89210cf5`).
+> `f89210cf5`) and `dev-tools/parity-regression.sh` (`03dc67b74`, CPU/GPU
+> centre-value gate for scenes/parity).
 
 ## How the criteria are met
 
