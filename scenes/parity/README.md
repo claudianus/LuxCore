@@ -40,3 +40,18 @@ centre ≈ 1.48 instead of 4). The fix gates the timed overload behind
 `MTLAccelerationStructureMotionInstanceDescriptor` (any leaf has a motion
 transform). Static AS use the untimed `intersect(ray, as)` overload, which
 hits correctly; motion AS keep timed interpolation.
+
+## Post-fix measurement (2026-09, M5 Pro, Release)
+
+- `emissive-direct`: centre = (4,4,4) on both PATHCPU and PATHOCL/Metal
+  HWRT (pre-fix Metal centre ≈ 1.48 — leak gone).
+- `whiteenv`: centre = (0,0,0) on both (pre-fix Metal centre ≈ 0.625).
+- Cornell at 64 spp: image-mean delta ~0.5%, per-pixel absDelta p95 =
+  0.02 — residual CPU↔GPU difference is Monte-Carlo noise from
+  independent RNG streams, not a backend divergence.
+
+Gate guidance: assert the deterministic centre values in these scenes
+(exact equality is valid — they are single-bounce reads of constants).
+Do **not** gate stochastic renders per-pixel at <1e-3 — even same-backend
+re-seeds exceed that. For general scenes compare image means
+(<~1–2% at 64spp) or run to high-spp convergence.
