@@ -75,6 +75,7 @@ kernel void Accelerator_Intersect_RayBuffer_HWRT(
 		device LuxRayHit *rayHits [[buffer(1)]],
 		constant uint &rayCount [[buffer(2)]],
 		raytracing::instance_acceleration_structure sceneAS [[buffer(3)]],
+		constant uint &useMotionTime [[buffer(4)]],
 		uint gid [[thread_position_in_grid]]) {
 	if (gid >= rayCount)
 		return;
@@ -92,9 +93,11 @@ kernel void Accelerator_Intersect_RayBuffer_HWRT(
 
 	raytracing::intersector<raytracing::instancing, raytracing::triangle_data> itr;
 	// r.time drives Metal's motion instance interpolation when the instance
-	// acceleration structure was built with motion descriptors; it is ignored
-	// for static (non-motion) descriptors.
-	const auto hit = itr.intersect(ray, sceneAS, r.time);
+	// acceleration structure was built with motion descriptors. On a static
+	// (non-motion) instance AS the timed overload returns no intersection
+	// for every ray, so useMotionTime must gate it.
+	const auto hit = useMotionTime ?
+		itr.intersect(ray, sceneAS, r.time) : itr.intersect(ray, sceneAS);
 
 	if (hit.type == raytracing::intersection_type::none) {
 		// Match the software kernel's miss record exactly:
@@ -146,6 +149,7 @@ kernel void Accelerator_Intersect_RayBuffer_HWRT(
 		device LuxRayHit *rayHits [[buffer(1)]],
 		constant uint &rayCount [[buffer(2)]],
 		raytracing::instance_acceleration_structure sceneAS [[buffer(3)]],
+		constant uint &useMotionTime [[buffer(4)]],
 		uint gid [[thread_position_in_grid]]) {
 	if (gid >= rayCount)
 		return;
@@ -163,7 +167,10 @@ kernel void Accelerator_Intersect_RayBuffer_HWRT(
 
 	raytracing::intersector<raytracing::instancing, raytracing::triangle_data,
 			raytracing::curve_data> itr;
-	const auto hit = itr.intersect(ray, sceneAS, r.time);
+	// On a static (non-motion) instance AS the timed overload returns no
+	// intersection for every ray, so useMotionTime must gate it.
+	const auto hit = useMotionTime ?
+		itr.intersect(ray, sceneAS, r.time) : itr.intersect(ray, sceneAS);
 
 	if (hit.type == raytracing::intersection_type::none) {
 		rayHits[gid].t = r.maxt;
@@ -222,6 +229,13 @@ private:
 	// acceleration structures (macOS 14+) and LUXRAYS_METAL_CURVES != 0.
 	// Meshes without curve data always use the triangle path regardless.
 	bool useCurveData;
+
+	// True when the instance acceleration structure was built with motion
+	// instance descriptors (any leaf carries a motion system). The MSL
+	// kernel must only pass the ray time to intersect() when this is set:
+	// on a static (non-motion) instance AS the timed overload returns no
+	// intersection for every ray.
+	bool instanceASIsMotion;
 
 	id<MTLDevice> mtlDev;
 	id<MTLCommandQueue> queue;
@@ -298,7 +312,8 @@ bool MetalRTKernel::IsSupported(HardwareIntersectionDevice &dev, const MBVHAccel
 
 MetalRTKernel::MetalRTKernel(HardwareIntersectionDevice &dev, const MBVHAccel &acc) :
 		HardwareIntersectionKernel(dev), mdev(dynamic_cast<MetalIntersectionDevice &>(dev)),
-		mbvh(acc), pso(nil), workGroupSize(64), instanceAS(nil) {
+		mbvh(acc), pso(nil), workGroupSize(64), instanceAS(nil),
+		instanceASIsMotion(false) {
 	@autoreleasepool {
 		mtlDev = (__bridge id<MTLDevice>)mdev.GetMTLDevice();
 		queue = (__bridge id<MTLCommandQueue>)mdev.GetMTLCommandQueue();
@@ -589,6 +604,7 @@ void MetalRTKernel::BuildInstanceStructure() {
 				hasMotion = true;
 				break;
 			}
+		instanceASIsMotion = hasMotion;
 
 		MTLInstanceAccelerationStructureDescriptor *instDesc =
 				[MTLInstanceAccelerationStructureDescriptor descriptor];
@@ -745,6 +761,8 @@ void MetalRTKernel::EnqueueTraceRayBuffer(HardwareDeviceBuffer *rayBuff,
 		u_int rc = rayCount;
 		[enc setBytes:&rc length:sizeof(rc) atIndex:2];
 		[enc setAccelerationStructure:instanceAS atBufferIndex:3];
+		u_int motionTime = instanceASIsMotion ? 1u : 0u;
+		[enc setBytes:&motionTime length:sizeof(motionTime) atIndex:4];
 
 		const MTLSize grid = MTLSizeMake(rayCount, 1, 1);
 		const MTLSize tg = MTLSizeMake(workGroupSize, 1, 1);
