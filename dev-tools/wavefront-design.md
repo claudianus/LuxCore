@@ -252,3 +252,20 @@ default needs an A/B benchmark pass first (M2 scope).
   a per-state λ-only launch split (extra parallelism when a state is
   dominated by one λ) is a possible follow-up, as is reusing the
   same histogram→prefix→place pipeline for M3 material buckets.
+
+## Regression test
+
+`dev-tools/wavefront-regression.sh` automates the dense-vs-wavefront
+check: it renders `cornell.scn` (non-spectral, 64spp) and
+`cornell-spectral.scn` (128spp) in dense mode and with
+`LUXRAYS_WAVEFRONT_QUEUES=1 LUXRAYS_WAVEFRONT_DEBUG=1`, asserts all
+queue-integrity counters (`oob`/`dup`/`badState`/`badLambda`) stay
+zero, and requires the mean radiance of both outputs to agree within
+20% (Monte-Carlo tolerance — RNG consumption order differs by design,
+so pixel equality is not expected). Usage:
+
+```
+dev-tools/wavefront-regression.sh [path-to-luxcoreconsole]
+```
+
+Exit 0 = pass. Failure preserves logs under `/tmp/wf-regression-failed*`.
