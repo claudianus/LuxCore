@@ -161,7 +161,7 @@ fetch incoherence.
 | M | Scope | Gate |
 |---|---|---|
 | M1 | Queue buffers + counter plumbing, all 11 MK kernels indexed via `taskIndex`, indexed RT dispatch (OCL+Metal), runtime flag | PATHOCL only, TILE/RTPATH keep dense path |
-| M2 | λ-bucketed append + coherence metric | M1 parity green |
+| M2 | λ-bucketed append + coherence metric | ✅ implemented (see below) |
 | M3 | Material bucketing (eval) | M2 measured |
 
 ## M1 status (implemented, opt-in)
@@ -205,3 +205,50 @@ Known semantics difference vs. dense (by design): a task advances at
 most one state hop per iteration, so wall-clock iterations per sample
 increase — per-sample results are identical. Enabling wavefront by
 default needs an A/B benchmark pass first (M2 scope).
+
+## M2 status (implemented, opt-in)
+
+λ-bucketed append, keeping the queue memory flat:
+
+- **Scheme**: two device passes + a host prefix inside the one
+  existing per-iteration sync. `AdvancePaths_BucketHistogram` counts
+  each live task into `taskQueueCount[state][λ]` (36 u32) and caches
+  its hero-λ bin in `taskLambda[task]` (u32); the blocking count
+  readback (unchanged cadence) lets the host exclusive-prefix
+  λ-contiguous segment bases per state into `taskQueueBase` (36 u32,
+  uploaded); `AdvancePaths_BuildQueues` then appends via an atomic
+  cursor on `taskQueueBase`, so each flat per-state queue segment ends
+  up λ0|λ1|λ2 grouped. No third kernel launch and no extra sync vs.
+  M1; queue stays `NUM_STATES × taskCount`.
+- **λ source**: `SampleResult::spectralHeroAlive` bits [3..4] (hero
+  bin drawn per sample in `InitSampleResult`), clamped to
+  `SLG_SPECTRAL_BINS-1`. Non-`SLG_SPECTRAL` builds bucket everything
+  into λ0 — the layout degenerates to the M1 flat append order.
+- **MK kernels**: unchanged except `WAVEFRONT_GUARD` bounds lanes by
+  `Σλ taskQueueCount[state][λ]` (launch sizes come from host-side
+  totals). `WAVEFRONT_GID` indirection untouched — λ grouping emerges
+  purely from placement order.
+- **Coherence metric** (WFDBG): per-iteration `badLambda` (queue
+  entries whose cached λ ≠ their segment), `lamTrans` (λ transitions
+  in launch order) and `lamRunLen` (queued/lamTrans). Measured on
+  Apple M5 Pro: `badLambda=0`, `lamTrans` 1–18 per iteration vs.
+  ~350k expected under random λ ordering, `lamRunLen` up to 524288.
+- **Validated**: `scenes/cornell/cornell.scn` non-spectral renders
+  identical to dense (λ degenerates to M1); `cornell-spectral.scn`
+  (dispersive prism + laser, `path.spectral.enable=1`) at 128spp
+  converges to dense statistics (identical mean/center-band, nz
+  pixel count within Monte-Carlo scatter). OpenCL and Metal both
+  compile `AdvancePaths_BucketHistogram` via cl2msl and render.
+- **A/B benchmark** (Apple M5 Pro, cornell.scn, 512², 30s wall
+  clock): dense ~13.0M samples/s vs wavefront ~10.8M samples/s —
+  **~17% slower on this simple converged scene**. The per-iteration
+  histogram + build + host-sync overhead and the one-state-hop-per-
+  iteration cadence dominate where divergence is cheap anyway.
+  Wavefront stays opt-in; the expected win regime is divergent
+  workloads (glossy/specular mixes, heavy spectral dispersion,
+  high-occupancy scenes) — that needs a dedicated benchmark scene
+  before any default-enable discussion.
+- **Deferred**: λ bucketing is currently all-or-nothing per state;
+  a per-state λ-only launch split (extra parallelism when a state is
+  dominated by one λ) is a possible follow-up, as is reusing the
+  same histogram→prefix→place pipeline for M3 material buckets.

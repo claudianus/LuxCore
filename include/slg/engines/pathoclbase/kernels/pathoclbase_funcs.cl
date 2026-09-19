@@ -2869,7 +2869,9 @@ OPENCL_FORCE_NOT_INLINE void Mnee_ProcessState(
 		 * taskQueueBuf[taskQueueState * taskQueueStride + gid]
 		 * instead of indexing task arrays directly. A per-iteration
 		 * BuildQueues kernel refills the queues from the
-		 * authoritative taskState->state. */ \
+		 * authoritative taskState->state. taskQueueCount holds
+		 * NUM_STATES * SLG_SPECTRAL_BINS histogram counters
+		 * (per-state totals are their sums; M2 lambda bucketing). */ \
 		, __global const uint* restrict taskQueueBuf \
 		, __global const uint* restrict taskQueueCount \
 		, const uint taskQueueStride \
@@ -2889,11 +2891,16 @@ OPENCL_FORCE_NOT_INLINE void Mnee_ProcessState(
 // rounded up to the workgroup size (OpenCL requires global size to be
 // a multiple of it); lanes beyond the compacted queue length exit
 // before dereferencing the queue, whose tail slots hold stale task
-// indices from the previous iteration. Must be the first statement
+// indices from the previous iteration. The state launch covers the
+// sum of the per-(state, lambda) histogram counters (M2 lambda
+// bucketing keeps the queue layout flat). Must be the first statement
 // of every AdvancePaths_MK_* kernel.
 #define WAVEFRONT_GUARD \
 	if (wavefrontEnable && \
-			get_global_id(0) >= taskQueueCount[taskQueueState]) \
+			get_global_id(0) >= \
+				taskQueueCount[taskQueueState * SLG_SPECTRAL_BINS] + \
+				taskQueueCount[taskQueueState * SLG_SPECTRAL_BINS + 1] + \
+				taskQueueCount[taskQueueState * SLG_SPECTRAL_BINS + 2]) \
 		return; \
 	const size_t gid = WAVEFRONT_GID;
 

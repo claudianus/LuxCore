@@ -361,8 +361,10 @@ void PathOCLBaseOCLRenderThread::InitKernels() {
 		{advancePathsKernel_MK_NEXT_SAMPLE, "AdvancePaths_MK_NEXT_SAMPLE"},
 		{advancePathsKernel_MK_GENERATE_CAMERA_RAY, "AdvancePaths_MK_GENERATE_CAMERA_RAY"},
 		// Wavefront per-state queue builder (B2/E3): refills the queues
-		// from taskState->state once per iteration
+		// from taskState->state once per iteration; the histogram kernel
+		// counts the per-(state, lambda) population for the host prefix.
 		{advancePathsKernel_BuildQueues, "AdvancePaths_BuildQueues"},
+		{advancePathsKernel_BucketHistogram, "AdvancePaths_BucketHistogram"},
 	};
 
 	advancePathsWorkGroupSize = std::numeric_limits<size_t>::max();
@@ -598,15 +600,23 @@ void PathOCLBaseOCLRenderThread::SetKernelArgs() {
 
 	SetAllAdvancePathsKernelArgs(0);
 
-	// Wavefront queue builder (B2/E3): fixed arg list (no film deps),
-	// bound once alongside the MK kernels.
+	// Wavefront queue builder + histogram (B2/E3): fixed arg lists (no
+	// film deps), bound once alongside the MK kernels.
 	if (advancePathsKernel_BuildQueues) {
 		u_int argIndex = 0;
 		intersectionDevice.SetKernelArg(advancePathsKernel_BuildQueues, argIndex++, tasksStateBuff);
 		intersectionDevice.SetKernelArg(advancePathsKernel_BuildQueues, argIndex++, sampleResultsBuff);
 		intersectionDevice.SetKernelArg(advancePathsKernel_BuildQueues, argIndex++, taskQueueBuff);
-		intersectionDevice.SetKernelArg(advancePathsKernel_BuildQueues, argIndex++, taskQueueCountBuff);
+		intersectionDevice.SetKernelArg(advancePathsKernel_BuildQueues, argIndex++, taskQueueBaseBuff);
+		intersectionDevice.SetKernelArg(advancePathsKernel_BuildQueues, argIndex++, taskLambdaBuff);
 		intersectionDevice.SetKernelArg(advancePathsKernel_BuildQueues, argIndex++, (u_int)renderEngine->taskCount);
+	}
+	if (advancePathsKernel_BucketHistogram) {
+		u_int argIndex = 0;
+		intersectionDevice.SetKernelArg(advancePathsKernel_BucketHistogram, argIndex++, tasksStateBuff);
+		intersectionDevice.SetKernelArg(advancePathsKernel_BucketHistogram, argIndex++, sampleResultsBuff);
+		intersectionDevice.SetKernelArg(advancePathsKernel_BucketHistogram, argIndex++, taskQueueCountBuff);
+		intersectionDevice.SetKernelArg(advancePathsKernel_BucketHistogram, argIndex++, taskLambdaBuff);
 	}
 
 	//--------------------------------------------------------------------------
@@ -652,22 +662,48 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsKernel() {
 void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsWavefront() {
 	const u_int taskCount = renderEngine->taskCount;
 
-	// Zero the per-state queue counters, then refill the queues from the
-	// authoritative taskState->state (AdvancePaths_BuildQueues).
-	static const u_int zeros[WAVEFRONT_NUM_STATES] = { 0u };
+	// Zero the per-(state, lambda) histogram counters, then count every
+	// live task's lambda bucket (AdvancePaths_BucketHistogram).
+	static const u_int zeros[WAVEFRONT_NUM_STATES * WAVEFRONT_NUM_LAMBDA] = { 0u };
 	intersectionDevice.EnqueueWriteBuffer(taskQueueCountBuff,
 			CL_FALSE, sizeof(zeros), zeros);
+	intersectionDevice.EnqueueKernel(advancePathsKernel_BucketHistogram,
+			HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
+
+	// Read back the histogram (blocking) to size each per-state launch
+	// and to prefix the lambda segment bases. One host<->device sync
+	// per wavefront iteration.
+	intersectionDevice.EnqueueReadBuffer(taskQueueCountBuff,
+			CL_TRUE, sizeof(u_int) * wavefrontQueueCounts.size(),
+			wavefrontQueueCounts.data());
+
+	// Exclusive prefix per state: base[s][0] = 0, base[s][l] =
+	// base[s][l-1] + count[s][l-1]; totals feed the launch sizing.
+	// Stack array (not static) — render threads call this concurrently.
+	u_int queueBases[WAVEFRONT_NUM_STATES * WAVEFRONT_NUM_LAMBDA];
+	for (u_int s = 0; s < WAVEFRONT_NUM_STATES; ++s) {
+		u_int base = 0;
+		for (u_int l = 0; l < WAVEFRONT_NUM_LAMBDA; ++l) {
+			queueBases[s * WAVEFRONT_NUM_LAMBDA + l] = base;
+			base += wavefrontQueueCounts[s * WAVEFRONT_NUM_LAMBDA + l];
+		}
+		wavefrontQueueTotals[s] = base;
+	}
+	// Blocking write: queueBases is stack storage, so the copy must
+	// complete before returning (the buffer is consumed by the
+	// immediately-following BuildQueues launch anyway).
+	intersectionDevice.EnqueueWriteBuffer(taskQueueBaseBuff,
+			CL_TRUE, sizeof(queueBases), queueBases);
+
+	// Refill the queues: tasks land in lambda-contiguous segments of
+	// their state's flat queue region (AdvancePaths_BuildQueues).
 	intersectionDevice.EnqueueKernel(advancePathsKernel_BuildQueues,
 			HardwareDeviceRange(taskCount), HardwareDeviceRange(advancePathsWorkGroupSize));
 
-	// Read back the queue counts (blocking) to size each per-state
-	// launch. One host<->device sync per wavefront iteration.
-	intersectionDevice.EnqueueReadBuffer(taskQueueCountBuff,
-			CL_TRUE, sizeof(u_int) * WAVEFRONT_NUM_STATES,
-			wavefrontQueueCounts.data());
-
 	// Debug (LUXRAYS_WAVEFRONT_DEBUG=1): validate that every queued task
-	// index really is in the queue's state and appears exactly once.
+	// index really is in the queue's state and appears exactly once,
+	// plus the M2 lambda-coherence metrics (per-entry lambda check,
+	// lambda transitions and run length in launch order).
 	static const bool wavefrontDebug = getenv("LUXRAYS_WAVEFRONT_DEBUG") != nullptr;
 	static u_int dbgIter = 0;
 	if (wavefrontDebug && dbgIter++ < 8) {
@@ -677,15 +713,33 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsWavefront() {
 		std::vector<slg::ocl::pathoclbase::GPUTaskState> st(taskCount);
 		intersectionDevice.EnqueueReadBuffer(tasksStateBuff,
 				CL_TRUE, sizeof(st[0]) * taskCount, st.data());
-		u_int total = 0, badState = 0, dup = 0, oob = 0;
+		std::vector<u_int> lam(taskCount);
+		intersectionDevice.EnqueueReadBuffer(taskLambdaBuff,
+				CL_TRUE, sizeof(u_int) * taskCount, lam.data());
+		u_int total = 0, badState = 0, badLambda = 0, dup = 0, oob = 0;
+		u_int lamTrans = 0;
 		std::vector<u_int> seen(taskCount, 0);
 		for (u_int s = 0; s < WAVEFRONT_NUM_STATES; ++s) {
-			for (u_int i = 0; i < wavefrontQueueCounts[s]; ++i) {
+			u_int prevLambda = WAVEFRONT_NUM_LAMBDA;
+			for (u_int i = 0; i < wavefrontQueueTotals[s]; ++i) {
 				const u_int tid = q[s * taskCount + i];
 				++total;
 				if (tid >= taskCount) { ++oob; continue; }
 				if (seen[tid]++) ++dup;
 				if ((u_int)st[tid].state != s) ++badState;
+				// The launch-order lambda must match the segment the
+				// entry sits in: entries [0,count0) are lambda 0, etc.
+				u_int seg = 0;
+				u_int acc = wavefrontQueueCounts[s * WAVEFRONT_NUM_LAMBDA];
+				while (seg < WAVEFRONT_NUM_LAMBDA - 1 && i >= acc) {
+					++seg;
+					acc += wavefrontQueueCounts[s * WAVEFRONT_NUM_LAMBDA + seg];
+				}
+				if (lam[tid] != seg) ++badLambda;
+				if (lam[tid] != prevLambda) {
+					++lamTrans;
+					prevLambda = lam[tid];
+				}
 			}
 		}
 		u_int doneCount = 0;
@@ -694,13 +748,16 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsWavefront() {
 		SLG_LOG("[WFDBG it=" << (dbgIter-1) << "] queued=" << total
 				<< " done=" << doneCount << " oob=" << oob
 				<< " dup=" << dup << " badState=" << badState
-				<< " counts=[" << wavefrontQueueCounts[0] << ","
-				<< wavefrontQueueCounts[1] << "," << wavefrontQueueCounts[2]
-				<< "," << wavefrontQueueCounts[3] << "," << wavefrontQueueCounts[4]
-				<< "," << wavefrontQueueCounts[5] << "," << wavefrontQueueCounts[6]
-				<< "," << wavefrontQueueCounts[7] << "," << wavefrontQueueCounts[8]
-				<< "," << wavefrontQueueCounts[9] << "," << wavefrontQueueCounts[10]
-				<< "," << wavefrontQueueCounts[11] << "]");
+				<< " badLambda=" << badLambda
+				<< " lamTrans=" << lamTrans
+				<< " lamRunLen=" << (lamTrans ? (double)total / lamTrans : (double)total)
+				<< " totals=[" << wavefrontQueueTotals[0] << ","
+				<< wavefrontQueueTotals[1] << "," << wavefrontQueueTotals[2]
+				<< "," << wavefrontQueueTotals[3] << "," << wavefrontQueueTotals[4]
+				<< "," << wavefrontQueueTotals[5] << "," << wavefrontQueueTotals[6]
+				<< "," << wavefrontQueueTotals[7] << "," << wavefrontQueueTotals[8]
+				<< "," << wavefrontQueueTotals[9] << "," << wavefrontQueueTotals[10]
+				<< "," << wavefrontQueueTotals[11] << "]");
 	}
 
 	// Launch each non-empty state kernel over its own queue, in the same
@@ -723,7 +780,7 @@ void PathOCLBaseOCLRenderThread::EnqueueAdvancePathsWavefront() {
 	};
 
 	for (const auto &[kernelMember, state] : dispatchTable) {
-		const u_int count = wavefrontQueueCounts[state];
+		const u_int count = wavefrontQueueTotals[state];
 		const HardwareDeviceKernelUPtr &kernel = this->*kernelMember;
 		if (count && kernel) {
 			// OpenCL requires the global size to be a multiple of the
