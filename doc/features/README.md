@@ -30,7 +30,7 @@ ask for.
 | Metal native curves | [../dev-tools/metal_curve_design.md](../dev-tools/metal_curve_design.md) | `d32bfe3cd` | scenes/strands/hair.scn + BlendLuxCore adapter A/B (parity < MC noise) | **Apple only** (Metal HWRT) |
 | Lights plumbing | [restir-di.md](restir-di.md) | `4e40c8d4a` | manylights | CPU/OCL/Metal |
 | Film HW pipeline + OIDN | [oidn-film.md](oidn-film.md) | `30dc89ab3` | any render | OCL/Metal; OIDN=Metal validated* |
-| Blender adapter | [blender-adapter.md](blender-adapter.md) | BlendLuxCore repo — motion blur `43dc7674`, `35b47f18`; persistent-scene export (A6-II) `c40f585b` + frame-change fix `c78fb7de` + regression `ee166cdd`, `590cb0ac` | .blend scenes; `BlendLuxCore/dev-tools/a6_persistent_scene_test.py` | all; Metal opt = Apple |
+| Blender adapter | [blender-adapter.md](blender-adapter.md) | BlendLuxCore repo — motion blur `43dc7674`, `35b47f18`; persistent-scene export (A6-II) `c40f585b` + frame-change fix `c78fb7de` + regression `ee166cdd`, `590cb0ac`; material delta (A6-III) `2579a019` | .blend scenes; `BlendLuxCore/dev-tools/a6_persistent_scene_test.py` | all; Metal opt = Apple |
 | Wavefront task queues (M1+M2, opt-in) | [../dev-tools/wavefront-design.md](../dev-tools/wavefront-design.md) | `85a122a1e` cl2msl fix, `9c59522fe` M1, `f424a8552` M2 λ-bucketed queues (branch `feature/wavefront-queues`) | cornell, cornell-spectral | OCL/Metal; `LUXRAYS_WAVEFRONT_QUEUES=1` |
 | Deformation motion blur (E9, scoped) | [../dev-tools/deformation-motion-blur-design.md](../dev-tools/deformation-motion-blur-design.md) | `bc26dbd45` design doc | — | design only |
 
