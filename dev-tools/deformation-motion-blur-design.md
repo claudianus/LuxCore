@@ -7,7 +7,35 @@ curves. Adapter-side prerequisites (A5 step-collection infra) are done.
 On Metal, meshes carrying a vertex series now render true deformation
 blur via `MTLAccelerationStructureMotionTriangleGeometryDescriptor`;
 all other backends route through the software MBVH path (swept bounds +
-per-ray vertex interpolation). Embree still renders static (Phase 4).
+per-ray vertex interpolation). Embree uses native multi-timestep
+geometry (Phase 4).
+
+Phase-4 surface (implemented, `src/luxrays/accelerators/embreeaccel.cpp`):
+
+- `ExportTriangleMesh` resolves the base mesh via
+  `ExtTriangleMesh::FromMesh`; when the mesh carries a vertex-motion
+  series the geometry gets `rtcSetGeometryTimeStepCount(stepCount)` and
+  each step buffer is shared as a `RTC_BUFFER_TYPE_VERTEX` timestep
+  (zero-copy, same shared-buffer pattern as the existing step-0 export).
+  Step counts beyond `RTC_MAX_TIME_STEP_COUNT` throw, matching the
+  transform-motion export. Instanced deforming meshes share the same
+  multi-timestep geometry through the existing instance-scene path.
+- `ExportMotionTriangleMesh` composes transform and deformation motion:
+  each timestep's vertex buffer samples `GetVertexAtTime()` at the
+  motion-system step time and applies that step's `local2World`.
+- `Init` extends `minTime`/`maxTime` to cover vertex-series times so the
+  `(ray.time - minTime) * timeScale` normalization matches the shutter
+  range; `Intersect` now clamps the normalized time to [0,1] so
+  out-of-range shutter times sample the boundary poses (same clamping
+  as `GetVertexAtTime` on the BVH/MBVH/OpenCL paths).
+- Limitation: Embree distributes timesteps uniformly over the scene
+  time interval, so a non-uniform step-time series is approximated
+  piecewise-uniformly — the same convention as the Metal HWRT path;
+  exact non-uniform timing is preserved on the MBVH CPU and OpenCL SW
+  paths which store real step times.
+- Validation: `vertexmotion_test` grew 8 Embree asserts (pose hit/miss
+  at t=0/0.5/1, no fabricated hit, static-leaf isolation, `meshIndex`
+  attribution, clamping) — 50 checks total, all passing.
 
 Phase-3 surface (implemented):
 
@@ -184,7 +212,8 @@ control points get the same treatment — `curveCPs` becomes
    **Done** — see the Phase-2 surface list above.
 3. ~~OpenCL swept-bound software path.~~ **Done** — see the Phase-3
    surface list above.
-4. Embree timestep path (CPU parity).
+4. ~~Embree timestep path (CPU parity).~~ **Done** — see the Phase-4
+   surface list above.
 5. BlendLuxCore mesh + hair export.
 6. Validation scenes: animated character mesh, GN-deformed geometry,
    armature-driven hair — A/B vs static, plus a divergence-stress scene.

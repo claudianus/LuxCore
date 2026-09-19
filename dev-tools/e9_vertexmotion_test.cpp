@@ -9,6 +9,7 @@
 #include "luxrays/core/context.h"
 #include "luxrays/accelerators/mbvhaccel.h"
 #include "luxrays/accelerators/bvhaccel.h"
+#include "luxrays/accelerators/embreeaccel.h"
 
 using namespace luxrays;
 
@@ -346,6 +347,71 @@ int main() {
 		CHECK(shoot(1.5f, 0.5f, 0.1f), "K=3 nonuniform: mid first segment (x+1)");
 		CHECK(!shoot(2.5f, 0.5f, 0.1f), "K=3 nonuniform: not yet at step1 at t=0.1");
 		CHECK(shoot(2.5f, 0.5f, 1.f), "K=3 nonuniform: holds pose to end");
+	}
+
+	//------------------------------------------------------------------
+	// Phase 4: EmbreeAccel vertex timesteps (CPU path)
+	//------------------------------------------------------------------
+	{
+		Context ctx;
+		std::deque<const Mesh *> meshes;
+
+		// Leaf 0: static quad in the z=0 plane at x in [10,11]
+		VertexBuffer svs(4);
+		svs[0] = Point(10,0,0); svs[1] = Point(11,0,0);
+		svs[2] = Point(11,1,0); svs[3] = Point(10,1,0);
+		TriangleBuffer sts(2);
+		sts[0] = Triangle(0,1,2); sts[1] = Triangle(0,2,3);
+		auto staticQuad = std::make_unique<ExtTriangleMesh>(
+				std::move(svs), std::move(sts), NormalBuffer());
+		meshes.push_back(staticQuad.get());
+
+		// Leaf 1: quad at x in [0,1] sweeping to x in [2,3] (z=0 plane)
+		VertexBuffer mvs(4);
+		mvs[0] = Point(0,0,0); mvs[1] = Point(1,0,0);
+		mvs[2] = Point(1,1,0); mvs[3] = Point(0,1,0);
+		TriangleBuffer mts(2);
+		mts[0] = Triangle(0,1,2); mts[1] = Triangle(0,2,3);
+		auto motionQuad = std::make_unique<ExtTriangleMesh>(
+				std::move(mvs), std::move(mts), NormalBuffer());
+		{
+			std::vector<VertexBuffer> steps;
+			steps.emplace_back(4); steps.emplace_back(4);
+			for (u_int v = 0; v < 4; ++v) {
+				steps[0][v] = Point(v%2, v/2, 0.f);
+				steps[1][v] = Point(2.f + v%2, v/2, 0.f);
+			}
+			motionQuad->SetVertexMotion(std::vector<float>{0.f, 1.f}, std::move(steps));
+		}
+		meshes.push_back(motionQuad.get());
+
+		EmbreeAccel accel(ctx);
+		accel.Init(meshes, 8, 4);
+
+		RayHit hit;
+		auto shoot = [&](float x, float y, float time) -> bool {
+			hit.SetMiss();
+			Ray ray(Point(x, y, 5.f), Vector(0,0,-1), 1e-4f, 100.f, time);
+			return accel.Intersect(&ray, &hit);
+		};
+
+		CHECK(shoot(0.5f, 0.5f, 0.f) && hit.meshIndex == 1,
+				"Embree motion: hit base pose at t=0");
+		CHECK(!shoot(0.5f, 0.5f, 1.f),
+				"Embree motion: base pose empty at t=1");
+		CHECK(!shoot(2.5f, 0.5f, 0.f),
+				"Embree motion: no fabricated hit at t=0");
+		CHECK(shoot(2.5f, 0.5f, 1.f) && hit.meshIndex == 1 &&
+				fabsf(hit.t - 5.f) < 1e-3,
+				"Embree motion: hit end pose at t=1");
+		CHECK(shoot(1.5f, 0.5f, 0.5f) && hit.meshIndex == 1,
+				"Embree motion: hit interpolated pose at t=0.5");
+		CHECK(shoot(10.5f, 0.5f, 0.5f) && hit.meshIndex == 0,
+				"Embree motion: static leaf unaffected");
+		CHECK(shoot(0.5f, 0.5f, -0.5f) && hit.meshIndex == 1,
+				"Embree motion: clamp below range");
+		CHECK(shoot(2.5f, 0.5f, 1.7f) && hit.meshIndex == 1,
+				"Embree motion: clamp above range");
 	}
 
 	printf("\n%d failures\n", fails);
