@@ -1,8 +1,45 @@
 # Deformation (vertex) motion blur — E9 design
 
-Status: scoped. Roadmap item E9 — engine-level per-vertex motion blur for
-meshes and curves. Adapter-side prerequisites (A5 step-collection infra)
-are done; this document covers the engine side.
+Status: **Phase 1 (plumbing) implemented.** Roadmap item E9 — engine-level
+per-vertex motion blur for meshes and curves. Adapter-side prerequisites
+(A5 step-collection infra) are done; backend acceleration is not started —
+meshes carrying a vertex series still render their static `vertices`
+(static fallback, same stance as E7 curve data in serialized scenes).
+
+Phase-1 surface (implemented):
+
+- `ExtTriangleMesh::SetVertexMotion(times, stepVerts)` — `motionVertTimes`
+  + `motionVertSteps` members. Validation: ≥2 steps, strictly increasing
+  finite times, every step buffer has the mesh vertex count (constant
+  topology). `GetVertexAtTime(i, t)` lerps between adjacent steps and
+  clamps outside the range (MotionSystem convention). Positions only;
+  per-step normals are not stored.
+- Propagation: `ApplyTransform` transforms every step buffer;
+  `CopyExt`/`Copy` keep the series iff `meshVertices` is not overridden
+  (same rule as curve data); `Merge` keeps it iff every input has a
+  series with identical times — partial presence or differing times
+  throw (same convention as UV/AOV mismatches). `Delete` frees steps;
+  serialization does not persist them (load clears → static fallback).
+- Scene plumbing: `Scene::SetMeshVertexMotion` →
+  `ExtMeshCache::SetMeshVertexMotion` (plain `TYPE_EXT_TRIANGLE` meshes
+  only — set it on the base shape, not instance/motion wrappers) +
+  `GEOMETRY_EDIT` so the next `Preprocess` rebuilds the DataSet.
+- Public API: `luxcore::Scene::SetMeshVertexMotion(meshName, times,
+  timesCount, verts, vertsCount)` — flat step-major float array —
+  and the pyluxcore binding
+  `Scene.SetMeshVertexMotion(name, times, [step (N,3) arrays])`.
+- Properties: `<prefix>.motion.N.time` + `<prefix>.motion.N.vertices`
+  parsed in `CreateInlinedMesh`, covering both `scene.objects.*` inlined
+  meshes and `scene.shapes.* type=inlinedmesh`. The object-level
+  transform-motion wrapper is now skipped when no step defines
+  `.transformation` (vertex-only motion keeps the plain-mesh path —
+  avoids pushing static transforms through the motion path).
+- Unit test: `vertexmotion_test` (`dev-tools/e9_vertexmotion_test.cpp`,
+  wired in `src/luxrays/CMakeLists.txt`) — 22 asserts covering
+  validation, lerp/clamp, copy/merge/transform/serialization rules.
+  Building it surfaced a pre-existing upstream bug —
+  `TriangleMesh::save()` serialized `vertices.Count()` as the triangle
+  count, corrupting every mesh where the two differ; fixed separately.
 
 ## Why this is an engine task
 
@@ -65,8 +102,9 @@ control points get the same treatment — `curveCPs` becomes
 
 ## Phasing
 
-1. ExtTriangleMesh vertex series + serialization/merge rules + scene
-   property plumbing (no backend uses it yet — pure plumbing).
+1. ~~ExtTriangleMesh vertex series + serialization/merge rules + scene
+   property plumbing (no backend uses it yet — pure plumbing).~~ **Done**
+   — see the Phase-1 surface list above.
 2. Metal motion geometry descriptor (primary GPU-first target).
 3. OpenCL swept-bound software path.
 4. Embree timestep path (CPU parity).
