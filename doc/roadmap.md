@@ -37,7 +37,8 @@ claims backed by measured evidence.
   fallback. CUDA/OptiX support is stale (post-E8 codepaths untested).
 - Non-uniform motion step times are exact on MBVH/BVH/SW-OpenCL and
   approximated piecewise-uniformly on Metal HWRT and Embree.
-- `PATHOCL` + `SOBOL` produced black frames in standalone tests once
-  (unverified-path artifact); `TILEPATHOCL`/`TILEPATHSAMPLER` is the
-  validated OCL config. Worth a dedicated triage before claiming PATHOCL
-  sampler parity.
+- `PATHOCL` + `SOBOL` black frames were reported once in an old build;
+  re-verified 2026-09 on cornell.scn and a minimal emissive scene —
+  output matches `PATHOCL+RANDOM` and `TILEPATHOCL`+`TILEPATHSAMPLER`
+  within sampling noise. Considered resolved; keep an eye on it if a
+  scene-specific reproducer shows up.
