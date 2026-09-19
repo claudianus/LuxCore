@@ -45,12 +45,15 @@ device binary. A Metal-enabled build has been produced and validated:
 
 ### Remaining integration step
 
-The dependency bundle itself (`out/dependencies/.../oidn`) is still the
-upstream `2.2.3` package built with `with_device_metal=False`. Shipping Metal
-OIDN in reproducible builds requires the LuxCoreDeps recipe change
-(`with_device_metal=True` + packaging the module) and a rebuilt dependency
-release — tracked in `dev-tools/oidn-metal/README.md` and the roadmap (E1).
-The LuxCore-side device request is already in tree.
+The deployed bundle (`out/dependencies/.../oidn`) is still the upstream
+package built with `with_device_metal=False`, plus a locally dropped
+`device_metal` for validation. The reproducible path is **proven**: our
+LuxCoreDeps fork's recipe (`with_device_metal=True` +
+`metal_embed_source=True`, OIDN **2.5.1**) produces a working Metal package
+via `conan create` **without Xcode** (see `dev-tools/oidn-metal/README.md`,
+LuxCoreDeps commit `736f92b`). Shipping needs: push the fork, CI-build the
+full dep bundle (with `device_cpu` too), tag a dep release, and point
+`build-settings.json` `Dependencies` at it.
 
 ## References
 

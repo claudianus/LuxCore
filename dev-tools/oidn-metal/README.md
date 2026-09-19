@@ -1,4 +1,4 @@
-# OIDN Metal backend — CLT-only build patch (OIDN 2.5.0)
+# OIDN Metal backend — CLT-only build patch (OIDN 2.5.1)
 
 This directory holds the patch used to build `libLuxOpenImageDenoise_device_metal`
 on machines that have **only the Xcode Command Line Tools** (no full Xcode).
@@ -32,11 +32,11 @@ same strategy to OIDN's Metal device module:
 ## Applying
 
 ```bash
-git clone --recursive --depth 1 --branch v2.5.0 \
+git clone --recursive --depth 1 --branch v2.5.1 \
     https://github.com/OpenImageDenoise/oidn.git
 cd oidn
 git lfs install && git lfs pull        # neural weights (.tza) are LFS objects
-git apply /path/to/oidn-2.5.0-metal-runtime-compile.patch
+git apply /path/to/oidn-2.5.1-metal-runtime-compile.patch
 cp /path/to/metal_source.py cmake/
 ```
 
@@ -70,7 +70,7 @@ Important integration notes learned while validating:
   `Loaded module: 'libLuxOpenImageDenoise_device_metal.2.5.0.dylib'` and
   `Device    : <GPU name>\n    Type    : Metal`.
 
-## Validation results (Apple M5 Pro, OIDN 2.5.0)
+## Validation results (Apple M5 Pro, OIDN 2.5.1)
 
 - Standalone `RT` filter, 512×512 HDR: **Metal 3.8 ms vs CPU 65.6 ms (~17×)**,
   identical denoise delta (mean|out-in| 0.0136 both).
@@ -79,6 +79,20 @@ Important integration notes learned while validating:
   correct denoised output with albedo+normal inputs.
 - CPU fallback intact: `newDevice(CPU)` loads `device_cpu`, `newDevice(Default)`
   picks Metal automatically.
+
+## Conan recipe integration (proven end-to-end)
+
+The LuxCoreDeps recipe carries this patch plus two options:
+
+- `oidn/*:with_device_metal=True` — builds `device_metal` (set in
+  `conan-profiles/conan-profile-macOS-ARM64`)
+- `oidn/*:metal_embed_source=True` — applies this patch in `build()`, so the
+  package compiles **without Xcode** (CLT only)
+
+`conan create` on OIDN **2.5.1** was verified on a CLT-only machine: the
+produced `oidn/2.5.1@luxcore/luxcore` package's `device_metal` runs the RT
+filter on Metal (~6.6 ms for 512×512). Recipe changes live in our
+LuxCoreDeps fork (local clone at `../LuxCoreDeps`, commit `736f92b`).
 
 ## Path to upstream / LuxCoreDeps
 
@@ -94,6 +108,9 @@ Two repos must change to ship this properly:
    `DeviceType::Metal` on `__APPLE__` with CPU fallback (already in tree,
    commit `30dc89ab3`).
 
-For our own dependency bundles (CLT-only machines), carry this patch in the
-LuxCoreDeps fork's recipe as a conan `patch` so the package builds without
-Xcode anywhere.
+For our own dependency bundles (CLT-only machines), the fork's recipe
+applies this patch via `metal_embed_source` so the package builds without
+Xcode anywhere. Remaining step for shipping: push the fork, let CI produce
+the full dep bundle (incl. `with_device_cpu=True` + ISPC), tag a dep
+release, and point `build-system/build-settings.json`
+`Dependencies.user/release` at it.
