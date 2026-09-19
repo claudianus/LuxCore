@@ -239,15 +239,28 @@ default needs an A/B benchmark pass first (M2 scope).
   converges to dense statistics (identical mean/center-band, nz
   pixel count within Monte-Carlo scatter). OpenCL and Metal both
   compile `AdvancePaths_BucketHistogram` via cl2msl and render.
-- **A/B benchmark** (Apple M5 Pro, cornell.scn, 512², 30s wall
-  clock): dense ~13.0M samples/s vs wavefront ~10.8M samples/s —
-  **~17% slower on this simple converged scene**. The per-iteration
-  histogram + build + host-sync overhead and the one-state-hop-per-
-  iteration cadence dominate where divergence is cheap anyway.
-  Wavefront stays opt-in; the expected win regime is divergent
-  workloads (glossy/specular mixes, heavy spectral dispersion,
-  high-occupancy scenes) — that needs a dedicated benchmark scene
-  before any default-enable discussion.
+- **A/B benchmark** (Apple M5 Pro, PATHOCL, wall clock): dense vs
+  wavefront across four scenes, best-of trailing `Avg. samples/sec`:
+
+  | Scene | Divergence profile | Dense | Wavefront | Δ |
+  |---|---|---:|---:|---:|
+  | cornell.scn (512², 30s) | trivial | ~13.0M | ~10.8M | **-17%** |
+  | classroom.scn (640×480, 30s) | interior, many materials | 1371 sp | 1277 sp | **~-7%** |
+  | luxball-carpaint (640×480, 15s) | multi-lobe BSDF | ~8.0M | ~7.4M | **~-8%** |
+  | cornell-spectral (512², 30s, λ on) | laser + prism dispersion | ~11.6M | ~9.8M | **~-15%** |
+
+  Wavefront loses on every workload tested on this hardware. The
+  per-iteration histogram + queue rebuild + host sync and the
+  one-state-hop-per-iteration cadence cost more than the coherence
+  gains buy at workgroup 64 — and the deficit shrinks with scene
+  divergence (classroom -7% vs cornell -17%), consistent with the
+  coherence model, but never inverts. λ bucketing (M2) does not help
+  even on a dispersive scene because that scene is path-coherent
+  anyway. **Wavefront stays opt-in**; enabling it by default would
+  need a workload where it demonstrably wins (e.g. extreme material
+  divergence, or a backend where divergence is costlier), or a
+  redesign that removes the per-iteration host sync (fused
+  histogram+place, persistent mega-kernel).
 - **Deferred**: λ bucketing is currently all-or-nothing per state;
   a per-state λ-only launch split (extra parallelism when a state is
   dominated by one λ) is a possible follow-up, as is reusing the
