@@ -1,0 +1,163 @@
+# Wavefront completion + λ-alignment (B2 / E3)
+
+Status: design baseline. Related: roadmap Phase B item B2, engine goal E3.
+
+## Current state
+
+`PATHOCL` on GPU already runs a **micro-kernel state machine**
+(`include/slg/engines/pathoclbase/kernels/pathoclbase_kernels_micro.cl`):
+per-iteration, `EnqueueAdvancePathsKernel()` launches 11 kernels —
+`MK_RT_NEXT_VERTEX`, `MK_HIT_NOTHING`, `MK_HIT_OBJECT`, `MK_RT_DL`,
+`MK_DL_ILLUMINATE`, `MK_DL_SAMPLE_BSDF`, `MK_MNEE_NEXT_VERTEX`,
+`MK_GENERATE_NEXT_VERTEX_RAY`, `MK_SPLAT_SAMPLE`, `MK_NEXT_SAMPLE`,
+`MK_GENERATE_CAMERA_RAY` — each over the **full `taskCount` range**.
+Each kernel reads `tasksState[gid].state` and early-outs on mismatch.
+Tasks recycle forever (`...→ MK_NEXT_SAMPLE → MK_GENERATE_CAMERA_RAY
+→ MK_RT_NEXT_VERTEX → ...`), so the alive set ≈ `taskCount` at all
+times. `MK_DONE` + `RAY_FLAGS_MASKED` only appear in
+TILEPATHOCL/RTPATHOCL.
+
+Per iteration the host loop (`pathoclopenclthread.cpp`) does:
+
+1. `EnqueueTraceRayBuffer(rays, rayHits, taskCount)` — one launch over
+   every task slot; masked/inactive rays exit inside the RT kernel but
+   still occupy lanes.
+2. 11 MK kernel launches, each scanning `taskCount` slots.
+3. `DrainGuide()` (path-guiding record drain).
+
+## What wavefront adds here (and what it doesn't)
+
+Already realised by the MK split: per-kernel register allocation /
+occupancy (each MK kernel is a separate `__kernel`), no mega-kernel
+divergence in the executed work.
+
+Not yet realised:
+
+1. **Per-state launch sizing.** Each MK launch currently scans all
+   `taskCount` slots and discards non-matching ones. With per-state
+   queues, kernel `S` launches over `count[S]` lanes only. Saves
+   `taskCount × 11` state reads + queue-scan overhead per iteration.
+2. **Queued ray dispatch.** Only tasks that produced a ray this
+   iteration occupy RT lanes (index-remapped trace over a ray queue).
+3. **λ-alignment.** Hero-wavelength 3-bin spectral transport: bucket
+   queue append by `λ` bin so same-λ tasks land in adjacent lanes →
+   coherent `spectralW` / bin progress per warp. No sort needed —
+   bucketed append is O(1) per task.
+4. **(Optional) material grouping.** Same bucketing by
+   `bsdf.materialIndex` improves `mats[]` / eval-op cache locality.
+
+## Design — per-state device queues (M1)
+
+Buffers (device, allocated once at `taskCount`):
+
+- `queueBuf[NUM_STATES][taskCount]` — uint task indices.
+- `queueCount[NUM_STATES]` — uint counters (atomic).
+- `rayQueue[taskCount]` + `rayCount` — indices of tasks whose
+  `rays[taskIndex]` needs tracing this iteration.
+
+Kernel protocol (replaces `taskState->state = X` transitions):
+
+- Each MK kernel `S` is launched over `count[S]` lanes:
+  `const uint taskIndex = queueBuf[S][gid];` — all task/rays/film
+  indexing switches from `gid` to `taskIndex`. `taskState->state`
+  remains the authoritative record.
+- A kernel that transitions a task to state `T` executes
+  `queueBuf[T][atomic_add(&queueCount[T], 1)] = taskIndex` (bucketed by
+  λ bin once M3 lands — see below). Kernels that emit a ray also append
+  to `rayQueue`.
+- Host per iteration: read `queueCount[]` + `rayCount` (single small
+  readback), launch `EnqueueTraceRayBuffer` over `rayCount` with
+  `rayQueue` indirection, then launch each non-empty state kernel in
+  the same topological order as today. Zero counters (tiny fill kernel
+  or clear-on-read — see "Counter reset" below).
+- Tasks produced into a state whose kernel already ran this iteration
+  are processed next iteration — one state-step per task per
+  iteration, i.e. a true wavefront (same convergence total, denser
+  launches).
+
+### Counter reset
+
+Cheapest correct scheme: each state kernel, after processing its
+queue, leaves the counter intact; the host-side snapshot for
+iteration `i+1` then counts "queued but not yet consumed". Simpler
+alternative used by Cycles-style implementations: keep **two counter
+banks** (write-bank for appends, read-bank snapshotted by the host
+kernel launch); a tiny `ResetCounters` kernel zeroes the write bank at
+iteration start after the host has read the previous bank. Decide
+during implementation; both are O(NUM_STATES) work.
+
+### RT indirection
+
+`EnqueueTraceRayBuffer(rayBuff, hitBuff, count)` currently assumes
+`rays[gid]`/`rayHits[gid]` dense. Add an optional index-buffer variant
+(`EnqueueTraceRayBufferIndexed(rayBuff, hitBuff, indexBuff, count)`)
+to `HardwareIntersectionDevice` — implemented for the OpenCL and Metal
+paths (CUDA/OptiX paths keep dense fallback: pass identity or keep
+dense launch while the queue path is OCL/Metal-only initially, behind
+a flag).
+
+### SampleResult / film indexing
+
+`sampleResultsBuff[gid]` and per-pixel film splat use the task index —
+with `taskIndex` indirection this stays correct automatically, since
+splat resolves through `eyePathInfos[taskIndex]` (pixel indices), not
+the slot. Verify `filmNoise`/denoiser per-pixel fields too.
+
+## M2 — λ-aligned append
+
+- Store the task's sampled λ bin index in `GPUTaskState` (already
+  carried in `SampleResult`/spectral state — check `spectralW`
+  plumbing; add a `u_char lambdaBin` if not persisted at task level).
+- Queue layout per state: `NUM_λ` sub-buckets
+  (`queueBuf[S]` split into λ segments with per-bucket counters, or a
+  per-state bucketed append: `bucketBase[S][λ]` + counter array).
+  Append computes `λ` once — near-zero cost vs. a sort.
+- Effect: warps become λ-coherent → `spectralW` uniform per warp, and
+  the 3-bin spectral accumulators converge in lockstep, cutting
+  spectral sample variance (see ROADMAP E3 argument).
+
+## M3 — material grouping (optional, eval only after M1/M2 measured)
+
+Same bucket mechanism keyed on `taskState->bsdf.materialIndex`
+(low-bits bucket, e.g. 8 buckets). Only if profiling shows material
+fetch incoherence.
+
+## Risks / invariants
+
+- **Iteration semantics**: with snapshot counters, a task advances
+  ≥1 state per iteration instead of potentially several — convergence
+  per-sample is identical; per-iteration latency changes only.
+- **Ordering**: MK_SPLAT_SAMPLE does film writes — wavefront preserves
+  per-task order, so film correctness holds; verify TILEPATHOCL tile
+  ownership unchanged (tiles still own their task slots).
+- **MNEE sub-state machine** (`MK_MNEE_NEXT_VERTEX` ↔ RT): the RT
+  round-trip is already queue-shaped (needsTrace flag). Keep the
+  existing ping-pong; it maps naturally onto ray queue + its own state
+  queue.
+- **PhotonGI / DLS / ELVC / ReSTIR / path-guiding drains**: these read
+  task arrays by slot — indirection is contained to kernels; drains run
+  on `taskStatsBuff`/record buffers unchanged.
+- **Flag gate**: compile-time `WAVEFRONT_QUEUES` (kernel arg +
+  `-D` define) + runtime `renderengine` property
+  (`pathocl.wavefront.queues = 0/1`) so PATHOCL keeps a proven fallback
+  — required for A/B benchmarks and upstream reviewability.
+
+## Validation plan
+
+- Pixel-parity: `scenes/parity/*` + cornell/luxball set — PATHOCL
+  queues on/off must produce identical images (same seed schedule;
+  state-step reordering must not alter RNG consumption per task — the
+  per-task `Seed` is stored in `tasks[]`, so this holds by
+  construction).
+- Perf: sample/s and iteration latency on Metal + OCL, low-spp and
+  high-spp regimes (queue wins grow with render duration).
+- λ-coherence metric: average λ-bin run-length in queue order
+  (debug counter) + spectral AOV variance on dispersive scene.
+
+## Milestones
+
+| M | Scope | Gate |
+|---|---|---|
+| M1 | Queue buffers + counter plumbing, all 11 MK kernels indexed via `taskIndex`, indexed RT dispatch (OCL+Metal), runtime flag | PATHOCL only, TILE/RTPATH keep dense path |
+| M2 | λ-bucketed append + coherence metric | M1 parity green |
+| M3 | Material bucketing (eval) | M2 measured |
