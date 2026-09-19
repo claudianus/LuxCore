@@ -34,11 +34,14 @@
 __kernel void AdvancePaths_MK_RT_NEXT_VERTEX(
 		KERNEL_ARGS
 		) {
-	const size_t gid = get_global_id(0);
+	WAVEFRONT_GUARD
 	__global SampleResult *sampleResult = &sampleResultsBuff[gid];
 
-	// This has to be done by the first kernel to run after RT kernel
-	sampleResult->rayCount += 1;
+	// This has to be done by the first kernel to run after RT kernel.
+	// Under wavefront queues, AdvancePaths_BuildQueues already accounts
+	// the traced ray for every task, so skip it here.
+	if (!wavefrontEnable)
+		sampleResult->rayCount += 1;
 
 	// Read the path state
 	__global GPUTaskState *taskState = &tasksState[gid];
@@ -114,7 +117,7 @@ __kernel void AdvancePaths_MK_RT_NEXT_VERTEX(
 __kernel void AdvancePaths_MK_HIT_NOTHING(
 		KERNEL_ARGS
 		) {
-	const size_t gid = get_global_id(0);
+	WAVEFRONT_GUARD
 
 	// Read the path state
 	__global GPUTaskState *taskState = &tasksState[gid];
@@ -204,7 +207,7 @@ __kernel void AdvancePaths_MK_HIT_NOTHING(
 __kernel void AdvancePaths_MK_HIT_OBJECT(
 		KERNEL_ARGS
 		) {
-	const size_t gid = get_global_id(0);
+	WAVEFRONT_GUARD
 
 	// Read the path state
 	__global GPUTaskState *taskState = &tasksState[gid];
@@ -450,7 +453,7 @@ __kernel void AdvancePaths_MK_HIT_OBJECT(
 __kernel void AdvancePaths_MK_RT_DL(
 		KERNEL_ARGS
 		) {
-	const size_t gid = get_global_id(0);
+	WAVEFRONT_GUARD
 
 	// Read the path state
 	__global GPUTask *task = &tasks[gid];
@@ -587,7 +590,7 @@ __kernel void AdvancePaths_MK_RT_DL(
 __kernel void AdvancePaths_MK_DL_ILLUMINATE(
 		KERNEL_ARGS
 		) {
-	const size_t gid = get_global_id(0);
+	WAVEFRONT_GUARD
 
 	// Read the path state
 	__global GPUTask *task = &tasks[gid];
@@ -677,7 +680,7 @@ __kernel void AdvancePaths_MK_DL_ILLUMINATE(
 __kernel void AdvancePaths_MK_DL_SAMPLE_BSDF(
 		KERNEL_ARGS
 		) {
-	const size_t gid = get_global_id(0);
+	WAVEFRONT_GUARD
 
 	// Read the path state
 	__global GPUTaskState *taskState = &tasksState[gid];
@@ -771,7 +774,7 @@ __kernel void AdvancePaths_MK_DL_SAMPLE_BSDF(
 __kernel void AdvancePaths_MK_MNEE_NEXT_VERTEX(
 		KERNEL_ARGS
 		) {
-	const size_t gid = get_global_id(0);
+	WAVEFRONT_GUARD
 
 	// Read the path state
 	__global GPUTaskState *taskState = &tasksState[gid];
@@ -819,7 +822,7 @@ __kernel void AdvancePaths_MK_MNEE_NEXT_VERTEX(
 __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 		KERNEL_ARGS
 		) {
-	const size_t gid = get_global_id(0);
+	WAVEFRONT_GUARD
 
 	// Read the path state
 	__global GPUTask *task = &tasks[gid];
@@ -1125,7 +1128,7 @@ __kernel void AdvancePaths_MK_GENERATE_NEXT_VERTEX_RAY(
 __kernel void AdvancePaths_MK_SPLAT_SAMPLE(
 		KERNEL_ARGS
 		) {
-	const size_t gid = get_global_id(0);
+	WAVEFRONT_GUARD
 
 	// Read the path state
 	__global GPUTask *task = &tasks[gid];
@@ -1227,7 +1230,7 @@ __kernel void AdvancePaths_MK_SPLAT_SAMPLE(
 __kernel void AdvancePaths_MK_NEXT_SAMPLE(
 		KERNEL_ARGS
 		) {
-	const size_t gid = get_global_id(0);
+	WAVEFRONT_GUARD
 
 	// Read the path state
 	__global GPUTask *task = &tasks[gid];
@@ -1292,7 +1295,7 @@ __kernel void AdvancePaths_MK_GENERATE_CAMERA_RAY(
 	// Generate a new path and camera ray only it is not TILEPATHOCL: path regeneration
 	// is not used in this case
 #if !defined(RENDER_ENGINE_TILEPATHOCL) && !defined(RENDER_ENGINE_RTPATHOCL)
-	const size_t gid = get_global_id(0);
+	WAVEFRONT_GUARD
 
 	// Read the path state
 	__global GPUTask *task = &tasks[gid];
@@ -1344,6 +1347,39 @@ __kernel void AdvancePaths_MK_GENERATE_CAMERA_RAY(
 	task->seed = seedValue;
 
 #endif
+}
+
+//------------------------------------------------------------------------------
+// Wavefront queue builder (B2/E3 M1)
+//
+// Runs once per iteration when wavefront queues are enabled: scans the
+// authoritative taskState->state and appends every live task to its
+// per-state queue (taskQueueBuf[state * stride + slot]). taskQueueCount
+// must be zeroed by the host before this kernel runs. Tasks in MK_DONE
+// are terminal and not queued. Also accounts the per-iteration traced
+// ray on every task, matching the dense-mode semantics of
+// AdvancePaths_MK_RT_NEXT_VERTEX (which skips the increment under
+// wavefront).
+//------------------------------------------------------------------------------
+
+__kernel void AdvancePaths_BuildQueues(
+		__global GPUTaskState *tasksState,
+		__global SampleResult *sampleResultsBuff,
+		__global uint *taskQueueBuf,
+		__global uint *taskQueueCount,
+		const uint taskQueueStride
+		) {
+	const size_t gid = get_global_id(0);
+
+	// This has to be done once per iteration for each task while the
+	// RT pass is still dense (every task's ray is traced).
+	sampleResultsBuff[gid].rayCount += 1;
+
+	const uint state = (uint)tasksState[gid].state;
+	if (state == MK_DONE)
+		return;
+
+	taskQueueBuf[state * taskQueueStride + atomic_inc(&taskQueueCount[state])] = gid;
 }
 
 // vim: autoindent noexpandtab tabstop=4 shiftwidth=4

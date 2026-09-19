@@ -43,6 +43,10 @@ namespace ocl { namespace pathoclbase {
 
 class PathOCLBaseRenderEngine;
 
+// Number of per-state wavefront task queues: mirrors the PathState
+// enum in pathoclbase_datatypes.cl (MK_* states 0..11)
+inline constexpr u_int WAVEFRONT_NUM_STATES = 12;
+
 //------------------------------------------------------------------------------
 // Path Tracing GPU-only render threads
 // (base class for all types of OCL path tracers)
@@ -181,7 +185,7 @@ protected:
 	void InitSampleResultsBuffer();
 
 	void SetInitKernelArgs(const u_int filmIndex);
-	void SetAdvancePathsKernelArgs(luxrays::HardwareDeviceKernelRPtr advancePathsKernel, const u_int filmIndex);
+	void SetAdvancePathsKernelArgs(luxrays::HardwareDeviceKernelRPtr advancePathsKernel, const u_int filmIndex, const u_int queueState = 0);
 	void SetAllAdvancePathsKernelArgs(const u_int filmIndex);
 	void SetKernelArgs();
 
@@ -193,6 +197,7 @@ protected:
 	);
 
 	void EnqueueAdvancePathsKernel();
+	void EnqueueAdvancePathsWavefront();
 
 	static luxrays::oclKernelCache *AllocKernelCache(const std::string &type);
 	static void GetKernelParamters(std::vector<std::string> &params,
@@ -305,7 +310,21 @@ protected:
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_SPLAT_SAMPLE;
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_NEXT_SAMPLE;
 	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_MK_GENERATE_CAMERA_RAY;
+	// Wavefront per-state task queues (B2/E3): BuildQueues refills the
+	// queues once per iteration from the authoritative taskState->state
+	luxrays::HardwareDeviceKernelUPtr advancePathsKernel_BuildQueues;
 	size_t advancePathsWorkGroupSize;
+
+	// Wavefront queues (B2/E3 M1): taskQueueBuff holds
+	// WAVEFRONT_NUM_STATES * taskCount uint task indices;
+	// taskQueueCountBuff holds one counter per state. Allocated only
+	// when wavefrontQueues is enabled (env LUXRAYS_WAVEFRONT_QUEUES=1).
+	luxrays::HardwareDeviceBuffer *taskQueueBuff;
+	luxrays::HardwareDeviceBuffer *taskQueueCountBuff;
+	bool wavefrontQueues;
+	// Host-side snapshot of the per-state queue counters, refreshed by
+	// EnqueueAdvancePathsWavefront each iteration
+	std::vector<u_int> wavefrontQueueCounts;
 
 	std::unique_ptr<slg::ocl::pathoclbase::GPUTaskStats[]> gpuTaskStats;
 

@@ -1,6 +1,8 @@
 # Wavefront completion + λ-alignment (B2 / E3)
 
-Status: design baseline. Related: roadmap Phase B item B2, engine goal E3.
+Status: **M1 implemented** (opt-in, `LUXRAYS_WAVEFRONT_QUEUES=1`;
+validated on OpenCL + Metal — see "M1 status" below). M2/M3 pending.
+Related: roadmap Phase B item B2, engine goal E3.
 
 ## Current state
 
@@ -161,3 +163,45 @@ fetch incoherence.
 | M1 | Queue buffers + counter plumbing, all 11 MK kernels indexed via `taskIndex`, indexed RT dispatch (OCL+Metal), runtime flag | PATHOCL only, TILE/RTPATH keep dense path |
 | M2 | λ-bucketed append + coherence metric | M1 parity green |
 | M3 | Material bucketing (eval) | M2 measured |
+
+## M1 status (implemented, opt-in)
+
+What landed, vs. the table above:
+
+- **Done**: `taskQueueBuff` (`WAVEFRONT_NUM_STATES × taskCount` u32)
+  + `taskQueueCountBuff` allocated only under
+  `LUXRAYS_WAVEFRONT_QUEUES=1`; `AdvancePaths_BuildQueues` refills
+  queues once per iteration from `taskState->state` (authoritative
+  source — no per-transition instrumentation); each MK kernel launches
+  over its compacted queue (count rounded up to `workGroupSize`;
+  `WAVEFRONT_GUARD` exits overflow lanes before touching stale queue
+  slots); `gid` is the task index — `SAMPLER_PARAM` threads it into
+  every sampler/eval helper that touches task-persistent arrays;
+  TILEPATHOCL/RTPATHOCL stay dense (their iteration model needs
+  multi-state-per-iteration); `rayCount` accounting preserved
+  (BuildQueues +1/task, MK_RT_NEXT_VERTEX's +1 gated to dense);
+  `LUXRAYS_WAVEFRONT_DEBUG=1` dumps per-iteration queue integrity
+  (oob/dup/badState counters).
+- **Deferred**: RT dispatch is still dense (`EnqueueTraceRayBuffer`
+  over `taskCount`); one host↔device sync per iteration for queue
+  counts (cheap, but prevents GPU-only scheduling); per-state launches
+  still serialize on the host queue.
+- **Validated** (Apple M5 Pro, `scenes/cornell/cornell.scn`,
+  512² / 32spp): OpenCL + Metal both compile all kernels incl.
+  `AdvancePaths_BuildQueues`; wavefront renders converge to the same
+  image as dense (byte diff = Monte-Carlo noise scale); WFDBG shows
+  `oob=0 dup=0 badState=0` every iteration; SOBOL/RANDOM/METROPOLIS
+  all render correctly; SAMPLECOUNT distribution matches dense (no
+  checkerboard); dense path unchanged when flag off.
+- **cl2msl fix** (`src/slg/utils/cl2msl.py`): `propagate_gid` is now
+  idempotent — signatures already carrying `gid` (via
+  `SAMPLER_PARAM_DECL` or explicit) are skipped; call-site `, gid`
+  append detects a real trailing `gid` argument (depth-aware last-arg
+  scan, previously dead `\)$` regex on a paren-less segment);
+  dependency detection ignores block/full-line comments so dead
+  debug comments no longer seed `gid` propagation.
+
+Known semantics difference vs. dense (by design): a task advances at
+most one state hop per iteration, so wall-clock iterations per sample
+increase — per-sample results are identical. Enabling wavefront by
+default needs an A/B benchmark pass first (M2 scope).

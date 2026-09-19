@@ -464,6 +464,18 @@ void PathOCLBaseOCLRenderThread::InitGPUTaskBuffer() {
 	//--------------------------------------------------------------------------
 
 	intersectionDevice.AllocBufferRW(&tasksStateBuff, nullptr, sizeof(slg::ocl::pathoclbase::GPUTaskState) * taskCount, "GPUTaskState");
+
+	//--------------------------------------------------------------------------
+	// Allocate wavefront per-state task queues (B2/E3)
+	//--------------------------------------------------------------------------
+
+	if (wavefrontQueues) {
+		intersectionDevice.AllocBufferRW(&taskQueueBuff, nullptr,
+				sizeof(u_int) * WAVEFRONT_NUM_STATES * taskCount, "taskQueue");
+		intersectionDevice.AllocBufferRW(&taskQueueCountBuff, nullptr,
+				sizeof(u_int) * WAVEFRONT_NUM_STATES, "taskQueueCount");
+		wavefrontQueueCounts.assign(WAVEFRONT_NUM_STATES, 0u);
+	}
 }
 
 void PathOCLBaseOCLRenderThread::InitSamplerSharedDataBuffer() {
