@@ -29,7 +29,7 @@ ask for.
 | Strand AOVs | [hair.md](hair.md) | `584fabbd1` | strands, strandu-test | CPU/OCL/Metal |
 | Metal native curves | [../dev-tools/metal_curve_design.md](../dev-tools/metal_curve_design.md) | `d32bfe3cd` | scenes/strands/hair.scn | **Apple only** (Metal HWRT) |
 | Lights plumbing | [restir-di.md](restir-di.md) | `4e40c8d4a` | manylights | CPU/OCL/Metal |
-| Film HW pipeline + OIDN | [oidn-film.md](oidn-film.md) | `30dc89ab3` | any render | OCL/Metal; OIDN=CPU here |
+| Film HW pipeline + OIDN | [oidn-film.md](oidn-film.md) | `30dc89ab3` | any render | OCL/Metal; OIDN=Metal validated* |
 | Blender adapter | [blender-adapter.md](blender-adapter.md) | BlendLuxCore repo | .blend scenes | all; Metal opt = Apple |
 
 > Engine/API plumbing and misc integration: `06b8b826d`, `8601eaa12`.
@@ -94,8 +94,10 @@ The upstream GitHub workflows (`.github/workflows/sample-builder.yml`,
 
 - **ReSTIR** is DI-only (no PT/GI/PG) and the RIS target lacks a visibility
   term (~2x spatial-reuse inefficiency) — opt-in, roadmap E2.
-- **OIDN** falls back to CPU on Apple (vendored build lacks `device_metal`)
-  — roadmap E1.
+- **OIDN Metal** validated locally (device module built + `Type: Metal`
+  confirmed in `INTEL_OIDN` pipeline, ~17× over CPU) but **not yet in the
+  dependency bundle** — requires LuxCoreDeps recipe `with_device_metal=True`
+  + dep release rebuild. See `dev-tools/oidn-metal/` — roadmap E1.
 - **Metal curves**: native Catmull-Rom primitives now replace the hair
   tessellation on the Metal HWRT path (commit `d32bfe3cd`, gated on
   macOS 14+ + `LUXCORE_METAL_CURVES`). Known v1 limits: curve meshes as
