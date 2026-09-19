@@ -120,6 +120,12 @@ def main():
         ("exp", 0.0, None, True),          # exp(0)=1 -> lit
         ("tan", 0.0, None, False),         # tan(0)=0 -> dark
         ("asin", 0.0, None, False),        # asin(0)=0 -> dark
+        ("sinh", 0.0, None, False),        # sinh(0)=0 -> dark
+        ("cosh", 0.0, None, True),         # cosh(0)=1 -> lit
+        ("tanh", 0.0, None, False),        # tanh(0)=0 -> dark
+        ("invsqrt", 0.25, None, True),     # 1/sqrt(0.25)=2 -> lit
+        ("floormod", 2.0, 2.0, False),     # 2 mod 2 = 0 -> dark
+        ("floormod", -0.5, 1.0, True),     # floored mod: -0.5 mod 1 = 0.5 -> lit
     ]
 
     for engine in ("PATHCPU", "PATHOCL"):

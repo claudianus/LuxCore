@@ -41,6 +41,13 @@ static float ApplyFunc(MathFuncOp op, const float a, const float b) {
 		case MATHFUNC_ATAN2: return atan2f(a, b);
 		case MATHFUNC_EXP: return expf(a);
 		case MATHFUNC_LN: return logf(Max(a, 1e-9f));
+		case MATHFUNC_SINH: return sinhf(a);
+		case MATHFUNC_COSH: return coshf(a);
+		case MATHFUNC_TANH: return tanhf(a);
+		case MATHFUNC_INVSQRT: return 1.f / sqrtf(Max(a, 1e-9f));
+		// Floored modulo (Blender FLOORMOD); guard against mod 0
+		case MATHFUNC_FLOORMOD: return (b == 0.f) ? 0.f :
+				a - b * floorf(a / b);
 		default:
 			return 0.f;
 	}
@@ -48,12 +55,12 @@ static float ApplyFunc(MathFuncOp op, const float a, const float b) {
 
 float MathFuncTexture::GetFloatValue(const HitPoint &hitPoint) const {
 	return ApplyFunc(op, tex1.get().GetFloatValue(hitPoint),
-			(op == MATHFUNC_ATAN2) ? tex2.get().GetFloatValue(hitPoint) : 0.f);
+			MathFuncIsBinary(op) ? tex2.get().GetFloatValue(hitPoint) : 0.f);
 }
 
 Spectrum MathFuncTexture::EvalSpectrumValue(const HitPoint &hitPoint) const {
 	const Spectrum a = tex1.get().GetSpectrumValue(hitPoint);
-	const Spectrum b = (op == MATHFUNC_ATAN2) ?
+	const Spectrum b = MathFuncIsBinary(op) ?
 			tex2.get().GetSpectrumValue(hitPoint) : Spectrum(0.f);
 
 	Spectrum result;
@@ -73,6 +80,11 @@ const char *MathFuncTexture::OpToString(MathFuncOp o) {
 		case MATHFUNC_ATAN2: return "atan2";
 		case MATHFUNC_EXP: return "exp";
 		case MATHFUNC_LN: return "ln";
+		case MATHFUNC_SINH: return "sinh";
+		case MATHFUNC_COSH: return "cosh";
+		case MATHFUNC_TANH: return "tanh";
+		case MATHFUNC_INVSQRT: return "invsqrt";
+		case MATHFUNC_FLOORMOD: return "floormod";
 		default: return "sin";
 	}
 }
@@ -84,7 +96,7 @@ PropertiesUPtr MathFuncTexture::ToProperties(const ImageMapCache &imgMapCache, c
 	props->Set(Property("scene.textures." + name + ".type")("mathfunc"));
 	props->Set(Property("scene.textures." + name + ".op")(OpToString(op)));
 	props->Set(Property("scene.textures." + name + ".texture1")(tex1.get().GetSDLValue()));
-	if (op == MATHFUNC_ATAN2)
+	if (MathFuncIsBinary(op))
 		props->Set(Property("scene.textures." + name + ".texture2")(tex2.get().GetSDLValue()));
 
 	return props;

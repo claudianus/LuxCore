@@ -602,12 +602,17 @@ TextureUPtr Scene::CreateTexture(const string &texName, const Properties &props)
 		else if (opStr == "atan2") op = MATHFUNC_ATAN2;
 		else if (opStr == "exp") op = MATHFUNC_EXP;
 		else if (opStr == "ln") op = MATHFUNC_LN;
+		else if (opStr == "sinh") op = MATHFUNC_SINH;
+		else if (opStr == "cosh") op = MATHFUNC_COSH;
+		else if (opStr == "tanh") op = MATHFUNC_TANH;
+		else if (opStr == "invsqrt") op = MATHFUNC_INVSQRT;
+		else if (opStr == "floormod") op = MATHFUNC_FLOORMOD;
 		else
 			throw runtime_error("Unknown mathfunc texture op: " + opStr);
 
 		auto& tex1 = GetTexture(props.Get(Property(propName + ".texture1")(1.f)));
 		// Unary ops have no second operand; tex2 is stored but never sampled
-		auto& tex2 = (op == MATHFUNC_ATAN2)
+		auto& tex2 = MathFuncIsBinary(op)
 				? GetTexture(props.Get(Property(propName + ".texture2")(0.f)))
 				: tex1;
 		tex = std::make_unique<MathFuncTexture>(op, tex1, tex2);

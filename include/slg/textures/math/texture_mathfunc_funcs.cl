@@ -34,6 +34,15 @@
 #define MATHFUNC_OP_ATAN2 6
 #define MATHFUNC_OP_EXP   7
 #define MATHFUNC_OP_LN    8
+#define MATHFUNC_OP_SINH  9
+#define MATHFUNC_OP_COSH  10
+#define MATHFUNC_OP_TANH  11
+#define MATHFUNC_OP_INVSQRT 12
+#define MATHFUNC_OP_FLOORMOD 13
+
+OPENCL_FORCE_INLINE bool MathFuncTexture_IsBinary(const uint op) {
+	return op == MATHFUNC_OP_ATAN2 || op == MATHFUNC_OP_FLOORMOD;
+}
 
 OPENCL_FORCE_INLINE float MathFuncTexture_Apply(const uint op,
 		const float a, const float b) {
@@ -49,6 +58,13 @@ OPENCL_FORCE_INLINE float MathFuncTexture_Apply(const uint op,
 		case MATHFUNC_OP_ATAN2: return atan2(a, b);
 		case MATHFUNC_OP_EXP: return exp(a);
 		case MATHFUNC_OP_LN: return log(max(a, 1e-9f));
+		case MATHFUNC_OP_SINH: return sinh(a);
+		case MATHFUNC_OP_COSH: return cosh(a);
+		case MATHFUNC_OP_TANH: return tanh(a);
+		case MATHFUNC_OP_INVSQRT: return 1.f / sqrt(max(a, 1e-9f));
+		// Floored modulo (Blender FLOORMOD); guard against mod 0
+		case MATHFUNC_OP_FLOORMOD: return (b == 0.f) ? 0.f :
+				a - b * floor(a / b);
 		default: return 0.f;
 	}
 }
@@ -67,7 +83,7 @@ OPENCL_FORCE_NOT_INLINE void MathFuncTexture_EvalOp(
 		case EVAL_FLOAT: {
 			// Operand evals run tex1 then tex2, so tex2 sits on top
 			float tex2 = 0.f;
-			if (op == MATHFUNC_OP_ATAN2) {
+			if (MathFuncTexture_IsBinary(op)) {
 				EvalStack_PopFloat(tex2);
 			}
 			float tex1;
@@ -79,7 +95,7 @@ OPENCL_FORCE_NOT_INLINE void MathFuncTexture_EvalOp(
 		}
 		case EVAL_SPECTRUM: {
 			float3 tex2 = 0.f;
-			if (op == MATHFUNC_OP_ATAN2) {
+			if (MathFuncTexture_IsBinary(op)) {
 				EvalStack_PopFloat3(tex2);
 			}
 			float3 tex1;

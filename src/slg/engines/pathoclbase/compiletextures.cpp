@@ -591,7 +591,7 @@ u_int CompiledScene::CompileTextureOps(const u_int texIndex,
 				case slg::ocl::TextureEvalOpType::EVAL_FLOAT:
 				case slg::ocl::TextureEvalOpType::EVAL_SPECTRUM: {
 					evalOpStackSize += CompileTextureOps(tex->mathFuncTex.tex1Index, opType);
-					if (tex->mathFuncTex.op == slg::MATHFUNC_ATAN2)
+					if (slg::MathFuncIsBinary((slg::MathFuncOp)tex->mathFuncTex.op))
 						evalOpStackSize += CompileTextureOps(tex->mathFuncTex.tex2Index, opType);
 					break;
 				}

@@ -37,14 +37,23 @@ typedef enum {
 	MATHFUNC_ASIN,
 	MATHFUNC_ACOS,
 	MATHFUNC_ATAN,
-	MATHFUNC_ATAN2,	// the only binary op: atan2(tex1, tex2)
+	MATHFUNC_ATAN2,	// binary: atan2(tex1, tex2)
 	MATHFUNC_EXP,
-	MATHFUNC_LN
+	MATHFUNC_LN,
+	MATHFUNC_SINH,
+	MATHFUNC_COSH,
+	MATHFUNC_TANH,
+	MATHFUNC_INVSQRT,
+	MATHFUNC_FLOORMOD	// binary: floored modulo tex1 mod tex2
 } MathFuncOp;
+
+inline bool MathFuncIsBinary(MathFuncOp o) {
+	return o == MATHFUNC_ATAN2 || o == MATHFUNC_FLOORMOD;
+}
 
 class MathFuncTexture : public Texture {
 public:
-	// tex2 is only evaluated by MATHFUNC_ATAN2; for unary ops pass tex1
+	// tex2 is only evaluated by binary ops; for unary ops pass tex1
 	// again (it is stored but never sampled)
 	MathFuncTexture(MathFuncOp o, TextureRef t1, TextureRef t2) :
 			op(o), tex1(t1), tex2(t2) { }
@@ -60,18 +69,18 @@ public:
 		Texture::AddReferencedTextures(referencedTexs);
 
 		tex1.get().AddReferencedTextures(referencedTexs);
-		if (op == MATHFUNC_ATAN2)
+		if (MathFuncIsBinary(op))
 			tex2.get().AddReferencedTextures(referencedTexs);
 	}
 	virtual void AddReferencedImageMaps(std::unordered_set<const ImageMap * > &referencedImgMaps) const {
 		tex1.get().AddReferencedImageMaps(referencedImgMaps);
-		if (op == MATHFUNC_ATAN2)
+		if (MathFuncIsBinary(op))
 			tex2.get().AddReferencedImageMaps(referencedImgMaps);
 	}
 
 	virtual void UpdateTextureReferences(TextureRef oldTex, TextureRef newTex) {
 		updtex(tex1, oldTex, newTex);
-		if (op == MATHFUNC_ATAN2)
+		if (MathFuncIsBinary(op))
 			updtex(tex2, oldTex, newTex);
 	}
 
